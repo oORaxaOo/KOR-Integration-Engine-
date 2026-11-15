@@ -31,8 +31,10 @@ behavior. Emergence observation is not a foundation delivery gate.
 ## Coordination
 A versioned workflow declares required and optional engines, dependencies,
 ordering constraints, timeouts, and failure policy. Only declared steps run.
+The current workflow component only validates definitions and creates a
+side-effect-free plan; it does not execute a step or persist workflow state.
 
-Engine states are distinct:
+Engine runtime states remain distinct:
 - PENDING: not yet considered;
 - RUNNING: execution requested;
 - COMPLETED: valid result returned;
@@ -77,9 +79,10 @@ baselines with controlled integrated runs. It is not required for foundation
 readiness.
 
 ## Rollout
-1. Freeze and test the shared protocol.
-2. Implement event ledger and deterministic workflow contracts.
-3. Add one read-only adapter at a time.
-4. Test failure, missing-data, permission, and replay behavior.
-5. Add curated shared knowledge.
-6. Only then consider controlled emergence studies.
+1. Freeze and test the shared event protocol.
+2. Establish deterministic workflow contracts and planning.
+3. Implement an append-only event ledger and durable workflow state.
+4. Add one read-only adapter at a time.
+5. Test failure, missing-data, permission, and replay behavior.
+6. Add curated shared knowledge.
+7. Only then consider controlled emergence studies.

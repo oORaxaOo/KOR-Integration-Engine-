@@ -1,7 +1,8 @@
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
+import json
 import pytest
-from kie.events import EpistemicStatus, IntegrationEvent, Sensitivity, Verification
+from kie.events import EpistemicStatus, IntegrationEvent, Sensitivity, Verification, event_to_dict
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -19,6 +20,30 @@ def test_payload_is_detached():
     event = make_event(payload=payload)
     payload["nested"]["value"] = 99
     assert event.payload["nested"]["value"] == 1
+
+def test_nested_payload_is_deeply_immutable():
+    event = make_event(payload={"nested": {"items": [1, {"value": 2}]}})
+    with pytest.raises(TypeError):
+        event.payload["nested"]["new"] = "blocked"
+    with pytest.raises(TypeError):
+        event.payload["nested"]["items"][1]["value"] = 3
+    with pytest.raises(AttributeError):
+        event.payload["nested"]["items"].append(4)
+
+def test_payload_requires_json_object_root():
+    with pytest.raises(ValueError, match="JSON object"):
+        make_event(payload=["not", "an", "object"])
+
+def test_payload_rejects_non_string_object_keys():
+    with pytest.raises(ValueError, match="keys must be strings"):
+        make_event(payload={1: "invalid"})
+
+def test_event_to_dict_returns_mutable_json_data_without_mutating_event():
+    event = make_event(payload={"nested": {"items": [1, 2]}})
+    exported = event_to_dict(event)
+    json.dumps(exported)
+    exported["payload"]["nested"]["items"].append(3)
+    assert event.payload["nested"]["items"] == (1, 2)
 
 def test_verified_requires_explicit_verification():
     with pytest.raises(ValueError, match="verification metadata"):
@@ -50,7 +75,7 @@ def test_oversized_payload_rejected():
         make_event(payload={"large": "x" * 70000})
 
 def test_non_finite_number_rejected():
-    with pytest.raises(ValueError, match="JSON-compatible"):
+    with pytest.raises(ValueError, match="finite"):
         make_event(payload={"bad": float("nan")})
 
 def test_expiry():
