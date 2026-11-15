@@ -32,3 +32,18 @@ __all__ = [
     "WorkflowRunRecord", "WorkflowStepRecord", "WorkflowStoreError",
     "WorkflowTransitionRecord",
 ]
+
+
+from .executor import (
+    AdapterRegistry, AdapterUnavailable, AuthorizationDenied,
+    ExecutionAlreadyRunning, ExecutionOutcome, ExecutionPolicy,
+    ExecutionRequest, ExecutionResult, ExecutorError, InvalidEngineResult,
+    WorkflowExecutor,
+)
+
+__all__ += [
+    "AdapterRegistry", "AdapterUnavailable", "AuthorizationDenied",
+    "ExecutionAlreadyRunning", "ExecutionOutcome", "ExecutionPolicy",
+    "ExecutionRequest", "ExecutionResult", "ExecutorError",
+    "InvalidEngineResult", "WorkflowExecutor",
+]

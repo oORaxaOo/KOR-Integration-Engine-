@@ -45,7 +45,7 @@ def make_event(run_id, request, *, producer="critical_thinking", idempotency_key
         recorded_at=NOW,
         epistemic_status=EpistemicStatus.OBSERVED,
         sensitivity=Sensitivity.INTERNAL,
-        allowed_consumers=("reliability", "evidence"),
+        allowed_consumers=("critical_thinking", "evidence") if producer == "reliability" else ("reliability", "evidence"),
         payload=payload or {"result": "ok"},
         task_id=str(run_id) if task_id is None else task_id,
         idempotency_key=request.idempotency_key if idempotency_key is None else idempotency_key,
@@ -331,3 +331,45 @@ def test_completed_result_must_include_event_and_non_success_must_not_include_on
         ExecutionResult(outcome=ExecutionOutcome.COMPLETED)
     with pytest.raises(ValueError, match="must not include"):
         ExecutionResult(outcome=ExecutionOutcome.FAILED, event=object(), reason="failure")
+
+
+def test_explicit_policy_allows_only_declared_workflow_and_engine():
+    from kie.executor import ExecutionPolicy
+    request = ExecutionRequest(
+        run_id=uuid4(), workflow_id="controlled_review", workflow_version="1.0",
+        step=type("Step", (), {"engine_id": "critical_thinking"})(),
+        attempt=1, idempotency_key="test-key", input_events=(),
+    )
+    policy = ExecutionPolicy(
+        allowed_workflows=frozenset({"controlled_review"}),
+        allowed_engines=frozenset({"critical_thinking"}),
+    )
+    assert policy.authorize(request)
+    assert not ExecutionPolicy().authorize(request)
+
+
+def test_explicit_policy_rejects_input_sensitivity_without_grant(tmp_path):
+    from kie.executor import ExecutionPolicy
+    adapter = StaticAdapter(event_factory=lambda request: make_event(request.run_id, request))
+    event_store, _, run, _, executor = setup_executor(tmp_path, adapter)
+    source = IntegrationEvent(
+        event_id=uuid4(), schema_version=1, event_type="restricted_input",
+        producer_engine="reliability", producer_version="0.1",
+        occurred_at=NOW, recorded_at=NOW,
+        epistemic_status=EpistemicStatus.OBSERVED,
+        sensitivity=Sensitivity.RESTRICTED,
+        allowed_consumers=("critical_thinking",), payload={"data": "restricted"},
+    )
+    event_store.append(source)
+    policy = ExecutionPolicy(
+        allowed_workflows=frozenset({"controlled_review"}),
+        allowed_engines=frozenset({"critical_thinking"}),
+        allowed_input_sensitivities=frozenset({Sensitivity.INTERNAL}),
+    )
+    executor.policy = policy
+
+    with pytest.raises(AuthorizationDenied):
+        asyncio.run(executor.execute_step(
+            run.run_id, "review", input_event_ids=(source.event_id,), now=NOW
+        ))
+    assert adapter.calls == 0
