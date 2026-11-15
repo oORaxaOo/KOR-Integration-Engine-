@@ -226,3 +226,96 @@ def test_invalid_max_retries_and_timezone_are_rejected(tmp_path):
             store.create_run(make_workflow(), make_plan(), max_retries=-1, now=NOW)
         with pytest.raises(ValueError, match="timezone-aware"):
             store.create_run(make_workflow(), make_plan(), now=datetime(2026, 1, 1))
+
+
+def test_run_and_incomplete_steps_are_recoverable_after_reopen(tmp_path):
+    path = tmp_path / "workflow.sqlite3"
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(path) as first:
+        run = first.create_run(workflow, make_plan(workflow), now=NOW)
+        first.start_step(run.run_id, "initial_review", now=NOW)
+    with SQLiteWorkflowStore(path) as second:
+        restored = second.get_run(run.run_id)
+        assert restored.status is RunStatus.RUNNING
+        step = next(s for s in restored.steps if s.step_id == "initial_review")
+        assert step.status is StepStatus.RUNNING
+        assert step.attempt_count == 1
+        assert step.deadline_at == NOW + timedelta(seconds=20)
+
+
+def test_second_completion_attempt_is_rejected(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        run = store.create_run(workflow, make_plan(workflow), now=NOW)
+        store.start_step(run.run_id, "initial_review", now=NOW)
+        store.complete_step(run.run_id, "initial_review", now=NOW + timedelta(seconds=1))
+        with pytest.raises(InvalidWorkflowTransition, match="not running"):
+            store.complete_step(run.run_id, "initial_review", now=NOW + timedelta(seconds=2))
+
+
+def test_manual_skip_is_allowed_only_for_optional_pending_step(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        run = store.create_run(workflow, make_plan(workflow), now=NOW)
+        with pytest.raises(InvalidWorkflowTransition, match="required"):
+            store.skip_step(run.run_id, "initial_review", now=NOW)
+        skipped = store.skip_step(run.run_id, "optional_reflection", reason="not relevant", now=NOW)
+        assert skipped.status is StepStatus.SKIPPED
+        assert skipped.reason == "not relevant"
+
+
+def test_completed_step_can_link_a_result_event_id(tmp_path):
+    workflow = make_workflow()
+    result_id = uuid4()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        run = store.create_run(workflow, make_plan(workflow), now=NOW)
+        store.start_step(run.run_id, "initial_review", now=NOW)
+        completed = store.complete_step(
+            run.run_id, "initial_review", result_event_id=result_id,
+            now=NOW + timedelta(seconds=1),
+        )
+        assert completed.result_event_id == result_id
+
+
+def test_pending_unavailable_step_is_recorded_as_unavailable(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        run = store.create_run(workflow, make_plan(workflow), now=NOW)
+        unavailable = store.mark_unavailable(
+            run.run_id, "initial_review", reason="engine did not respond", now=NOW,
+        )
+        assert unavailable.status is StepStatus.UNAVAILABLE
+        assert store.get_run(run.run_id).status is RunStatus.FAILED
+
+
+def test_dependency_failure_blocks_dependent_step(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        run = store.create_run(workflow, make_plan(workflow), now=NOW)
+        store.start_step(run.run_id, "initial_review", now=NOW)
+        store.fail_step(run.run_id, "initial_review", reason="failed", now=NOW)
+        with pytest.raises(InvalidWorkflowTransition, match="not startable"):
+            store.start_step(run.run_id, "reliability_check", now=NOW)
+        assert store.get_run(run.run_id).status is RunStatus.FAILED
+
+
+def test_list_runs_can_filter_by_status(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        first = store.create_run(workflow, make_plan(workflow), now=NOW)
+        second = store.create_run(workflow, make_plan(workflow), now=NOW + timedelta(seconds=1))
+        store.start_step(second.run_id, "initial_review", now=NOW + timedelta(seconds=2))
+        pending = store.list_runs(status=RunStatus.PENDING)
+        running = store.list_runs(status=RunStatus.RUNNING)
+        assert [item.run_id for item in pending] == [first.run_id]
+        assert [item.run_id for item in running] == [second.run_id]
+
+
+def test_duplicate_run_id_is_rejected_without_partial_rows(tmp_path):
+    workflow = make_workflow()
+    run_id = uuid4()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        store.create_run(workflow, make_plan(workflow), run_id=run_id, now=NOW)
+        with pytest.raises(Exception, match="could not create workflow run"):
+            store.create_run(workflow, make_plan(workflow), run_id=run_id, now=NOW)
+        assert len(store.get_run(run_id).steps) == 4
