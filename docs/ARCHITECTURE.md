@@ -29,10 +29,10 @@ engine policies or its own permissions, or claim consciousness from emergent
 behavior. Emergence observation is not a foundation delivery gate.
 
 ## Coordination
-A versioned workflow declares required and optional engines, dependencies,
-ordering constraints, timeouts, and failure policy. Only declared steps run.
-The current workflow component only validates definitions and creates a
-side-effect-free plan; it does not execute a step or persist workflow state.
+A versioned workflow declares which engine steps belong to a task, which are
+required, their dependencies, and timeouts. The current workflow component
+validates definitions and creates a side-effect-free deterministic plan; it
+does not execute a step or persist workflow state.
 
 Engine runtime states remain distinct:
 - PENDING: not yet considered;
@@ -63,15 +63,35 @@ event envelopes, provenance, routing history, workflow state, and curated
 cross-engine knowledge. Adapters expose only authorized fields. KIE does not
 query arbitrary engine databases.
 
-The event ledger and curated knowledge store are separate. Events are
-append-only; corrections are new linked events. Durable shared knowledge
-requires explicit review and retains source references.
+The event ledger is an append-only record of integration events, not a shared
+transcript or a replacement for engine memory. It stores only explicitly
+submitted event envelopes. Corrections are new linked events; existing
+records are not rewritten. The separate curated knowledge store will require
+explicit review and retain source references.
+
+## Event ledger
+The SQLite ledger assigns a monotonic sequence, stores a canonical event
+envelope, applies event-ID and producer-scoped idempotency checks in a write
+transaction, and links each entry to the previous entry with a SHA-256 hash.
+Database triggers reject ordinary UPDATE and DELETE operations. Integrity
+verification checks SQLite consistency, envelope digests, indexed metadata,
+sequence continuity, and the hash chain.
+
+The hash chain is tamper-evident, not tamper-proof. An actor with control of
+the database file can remove triggers or rewrite data; truncating the final
+records cannot be detected without an independently stored external anchor.
+The ledger does not encrypt payloads. File permissions, encryption at rest,
+backup handling, and host authentication remain separate requirements.
+
+Historical replay is read-only: it returns events in ledger order and never
+re-invokes engines. Event dispatch and retries belong to a later executor.
 
 ## Feedback-loop controls
 The protocol includes event IDs, parent IDs, correlation IDs, idempotency
 keys, expiry, and hop limits. The router enforces consumer allowlists.
-Persistence must enforce idempotency and deduplication. An engine cannot
-re-ingest its own event as new evidence without independent information.
+Persistence enforces event ID uniqueness and producer-scoped idempotency.
+An engine cannot re-ingest its own event as new evidence without independent
+information.
 
 ## Emergence observation
 Emergence observation is deferred. A later observer may compare isolated
@@ -81,8 +101,9 @@ readiness.
 ## Rollout
 1. Freeze and test the shared event protocol.
 2. Establish deterministic workflow contracts and planning.
-3. Implement an append-only event ledger and durable workflow state.
-4. Add one read-only adapter at a time.
-5. Test failure, missing-data, permission, and replay behavior.
-6. Add curated shared knowledge.
-7. Only then consider controlled emergence studies.
+3. Implement and audit the append-only event ledger.
+4. Define durable workflow execution state and failure semantics.
+5. Add one read-only adapter at a time.
+6. Test failure, missing-data, permission, and replay behavior.
+7. Add curated shared knowledge.
+8. Only then consider controlled emergence studies.

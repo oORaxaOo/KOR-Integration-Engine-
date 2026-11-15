@@ -1,11 +1,24 @@
 """KOR Integration Engine: deterministic coordination primitives."""
 
-from .events import ENGINE_IDS, EpistemicStatus, IntegrationEvent, Sensitivity, Verification, event_to_dict
+from .events import (
+    ENGINE_IDS, EpistemicStatus, IntegrationEvent, Sensitivity, Verification,
+    event_from_dict, event_to_dict,
+)
 from .routing import RouteDecision, route_event
-from .workflows import PlannedStep, StepPlanStatus, WorkflowDefinition, WorkflowPlan, WorkflowStep, plan_workflow
+from .workflows import (
+    PlannedStep, StepPlanStatus, WorkflowDefinition, WorkflowPlan,
+    WorkflowStep, plan_workflow,
+)
+from .event_store import (
+    AppendResult, EventConflictError, EventRecord, EventStoreError,
+    IdempotencyConflictError, IntegrityReport, SQLiteEventStore,
+)
 
 __all__ = [
-    "ENGINE_IDS", "EpistemicStatus", "IntegrationEvent", "Sensitivity", "Verification",
-    "event_to_dict", "RouteDecision", "route_event", "PlannedStep", "StepPlanStatus",
-    "WorkflowDefinition", "WorkflowPlan", "WorkflowStep", "plan_workflow",
+    "ENGINE_IDS", "EpistemicStatus", "IntegrationEvent", "Sensitivity",
+    "Verification", "event_from_dict", "event_to_dict", "RouteDecision",
+    "route_event", "PlannedStep", "StepPlanStatus", "WorkflowDefinition",
+    "WorkflowPlan", "WorkflowStep", "plan_workflow", "AppendResult",
+    "EventConflictError", "EventRecord", "EventStoreError",
+    "IdempotencyConflictError", "IntegrityReport", "SQLiteEventStore",
 ]
