@@ -13,6 +13,12 @@ from .event_store import (
     AppendResult, EventConflictError, EventRecord, EventStoreError,
     IdempotencyConflictError, IntegrityReport, SQLiteEventStore,
 )
+from .workflow_store import (
+    InvalidWorkflowTransition, RetryLimitExceeded, RunNotFoundError,
+    RunStatus, SQLiteWorkflowStore, StepNotFoundError, StepStatus,
+    WorkflowRunRecord, WorkflowStepRecord, WorkflowStoreError,
+    WorkflowTransitionRecord,
+)
 
 __all__ = [
     "ENGINE_IDS", "EpistemicStatus", "IntegrationEvent", "Sensitivity",
@@ -21,4 +27,8 @@ __all__ = [
     "WorkflowPlan", "WorkflowStep", "plan_workflow", "AppendResult",
     "EventConflictError", "EventRecord", "EventStoreError",
     "IdempotencyConflictError", "IntegrityReport", "SQLiteEventStore",
+    "InvalidWorkflowTransition", "RetryLimitExceeded", "RunNotFoundError",
+    "RunStatus", "SQLiteWorkflowStore", "StepNotFoundError", "StepStatus",
+    "WorkflowRunRecord", "WorkflowStepRecord", "WorkflowStoreError",
+    "WorkflowTransitionRecord",
 ]

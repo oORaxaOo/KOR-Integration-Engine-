@@ -30,22 +30,25 @@ behavior. Emergence observation is not a foundation delivery gate.
 
 ## Coordination
 A versioned workflow declares which engine steps belong to a task, which are
-required, their dependencies, and timeouts. The current workflow component
-validates definitions and creates a side-effect-free deterministic plan; it
-does not execute a step or persist workflow state.
+required, their dependencies, and timeouts. The planner creates a deterministic
+availability-aware plan. The Workflow State Manager persists runs and records
+step transitions, but does not execute engine code.
 
-Engine runtime states remain distinct:
-- PENDING: not yet considered;
-- RUNNING: execution requested;
-- COMPLETED: valid result returned;
-- SKIPPED: workflow says the engine is not needed;
-- UNAVAILABLE: required engine could not be reached;
-- NO_DATA: engine responded but had no usable data;
-- FAILED: execution failed.
+Runtime states remain distinct:
+- PENDING: eligible but not started;
+- RUNNING: an execution has been explicitly started;
+- COMPLETED: the caller recorded a successful result;
+- SKIPPED: an optional step was not needed;
+- UNAVAILABLE: a required or optional engine could not be reached;
+- NO_DATA: an engine responded but supplied no usable result;
+- FAILED: execution failed;
+- TIMED_OUT: the declared deadline passed before completion;
+- BLOCKED: a required dependency or engine condition prevents progress;
+- CANCELLED: execution was explicitly cancelled.
 
-A workflow may complete with optional engines skipped. It must not report
-complete when a required engine is unavailable, failed, or lacks a required
-result. Missing information remains missing.
+Run-level outcomes are PENDING, RUNNING, COMPLETED, PARTIAL, FAILED, BLOCKED,
+and CANCELLED. Required non-success outcomes fail the run; optional non-success
+outcomes can produce PARTIAL. Missing information remains missing.
 
 ## Priority
 1. System safety, privacy, and authorization.
@@ -64,10 +67,10 @@ cross-engine knowledge. Adapters expose only authorized fields. KIE does not
 query arbitrary engine databases.
 
 The event ledger is an append-only record of integration events, not a shared
-transcript or a replacement for engine memory. It stores only explicitly
-submitted event envelopes. Corrections are new linked events; existing
-records are not rewritten. The separate curated knowledge store will require
-explicit review and retain source references.
+transcript or a replacement for engine memory. The workflow transition table
+is an append-only history; run/step tables are the current-state projections
+updated transactionally alongside each transition. Corrections are new linked
+events; existing event records are not rewritten.
 
 ## Event ledger
 The SQLite ledger assigns a monotonic sequence, stores a canonical event
@@ -83,8 +86,31 @@ records cannot be detected without an independently stored external anchor.
 The ledger does not encrypt payloads. File permissions, encryption at rest,
 backup handling, and host authentication remain separate requirements.
 
-Historical replay is read-only: it returns events in ledger order and never
-re-invokes engines. Event dispatch and retries belong to a later executor.
+Historical event replay is read-only: it returns events in ledger order and
+never re-invokes engines. Event dispatch and retries belong to a later executor.
+
+## Workflow State Manager
+The state manager may share the event store's SQLite file, but maintains its
+own schema version. Every run stores a snapshot of the workflow identity and
+each step's engine, dependencies, required flag, and timeout. State transitions
+are committed in a transaction with the corresponding current-state update.
+The transition history rejects ordinary UPDATE and DELETE statements.
+
+Retries are explicit, bounded, and recorded as PENDING -> RUNNING attempt
+transitions. A deadline is calculated when a step starts. The current phase
+provides a polling method to mark overdue steps TIMED_OUT; it does not start
+background threads or kill a running engine. A future executor must enforce
+actual process/network timeouts and call the state manager with the result.
+
+A process restart does not erase runs. The next host process can list pending
+and running runs, inspect step states and transition history, and reconcile
+expired deadlines before it considers resuming. Persisted RUNNING means the
+work had been started, not that it is still alive after a crash. The executor
+must check the engine's real availability before resuming or retrying.
+
+The transition ledger is append-only but the current-state tables are mutable
+projections, not independently tamper-proof. The database remains protected by
+host file permissions and backups; SQLite triggers are not authentication.
 
 ## Feedback-loop controls
 The protocol includes event IDs, parent IDs, correlation IDs, idempotency
@@ -102,8 +128,9 @@ readiness.
 1. Freeze and test the shared event protocol.
 2. Establish deterministic workflow contracts and planning.
 3. Implement and audit the append-only event ledger.
-4. Define durable workflow execution state and failure semantics.
-5. Add one read-only adapter at a time.
-6. Test failure, missing-data, permission, and replay behavior.
-7. Add curated shared knowledge.
-8. Only then consider controlled emergence studies.
+4. Persist workflow execution state and failure semantics.
+5. Build a separately permissioned executor.
+6. Add one read-only adapter at a time.
+7. Test failure, missing-data, permission, and replay behavior.
+8. Add curated shared knowledge.
+9. Only then consider controlled emergence studies.
