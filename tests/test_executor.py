@@ -19,6 +19,7 @@ from kie.executor import (
     AuthorizationDenied,
     ExecutionOutcome,
     ExecutionPolicy,
+    ExecutionAlreadyRunning,
     ExecutionRequest,
     ExecutionResult,
     InvalidEngineResult,
@@ -298,7 +299,7 @@ def test_running_step_without_recoverable_result_is_not_started_twice(tmp_path):
     _, workflow_store, run, _, executor = setup_executor(tmp_path, adapter)
     workflow_store.start_step(run.run_id, "review", now=NOW)
 
-    with pytest.raises(InvalidWorkflowTransition, match="already running"):
+    with pytest.raises(ExecutionAlreadyRunning, match="already running"):
         asyncio.run(executor.execute_step(run.run_id, "review", now=NOW))
 
     assert adapter.calls == 0
