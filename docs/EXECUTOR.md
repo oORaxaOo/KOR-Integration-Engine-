@@ -20,7 +20,9 @@ explicitly allowed. A host may supply a stricter policy implementation.
 
 This application-level allowlist does not authenticate the host process or
 protect policy configuration from local file access. Those controls belong to
-the deployment environment.
+the deployment environment. Likewise, producer_engine is provenance metadata:
+matching it to the registered adapter is a consistency check, not cryptographic
+proof of which process produced the event.
 
 ## Input event handling
 The caller supplies exact input event IDs. The executor rejects duplicates,
