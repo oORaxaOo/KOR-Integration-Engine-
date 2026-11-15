@@ -336,3 +336,20 @@ def test_workflow_does_not_complete_while_available_optional_step_is_pending(tmp
         optional = next(s for s in current.steps if s.step_id == "optional_reflection")
         assert optional.status is StepStatus.PENDING
         assert current.status is RunStatus.PENDING
+
+
+def test_timeout_sweep_can_be_scoped_to_one_run(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        first = store.create_run(workflow, make_plan(workflow), now=NOW)
+        second = store.create_run(workflow, make_plan(workflow), now=NOW)
+        store.start_step(first.run_id, "initial_review", now=NOW)
+        store.start_step(second.run_id, "initial_review", now=NOW)
+
+        changed = store.expire_timed_out_steps(
+            now=NOW + timedelta(seconds=20), run_id=first.run_id
+        )
+
+        assert changed == ((first.run_id, "initial_review"),)
+        assert store.get_run(first.run_id).steps[0].status is StepStatus.TIMED_OUT
+        assert store.get_run(second.run_id).steps[0].status is StepStatus.RUNNING

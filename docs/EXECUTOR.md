@@ -71,9 +71,10 @@ cancellation may outlive the nominal timeout. Adapters that cross process or
 network boundaries must enforce their own hard limits.
 
 No background timeout sweeper is started. The host explicitly calls the
-workflow store's timeout polling method. Caller cancellation leaves the step
-RUNNING for reconciliation because cancellation is not proof that remote work
-stopped.
+workflow store's timeout polling method. The method can be scoped to one run;
+the executor scopes its timeout handling to the run it is currently executing.
+Caller cancellation leaves the step RUNNING for reconciliation because
+cancellation is not proof that remote work stopped.
 
 ## Deliberate limits
 - No live Hermes or WhatsApp registration.

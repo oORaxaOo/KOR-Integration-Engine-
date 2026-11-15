@@ -35,7 +35,8 @@ Step states:
 - A step can start only after every dependency is COMPLETED.
 - A step's timeout deadline is calculated at start from its declared timeout.
 - A RUNNING step can complete, fail, return NO_DATA, or become unavailable.
-- A timeout poll marks overdue RUNNING steps as TIMED_OUT.
+- A timeout poll marks overdue RUNNING steps as TIMED_OUT and can be scoped to
+  one run so one executor does not change unrelated workflows.
 - Retry is explicit, allowed only for UNAVAILABLE, NO_DATA, FAILED, or TIMED_OUT,
   and bounded by the maximum configured retry count for the run.
 - Every start and state change is recorded in the transition history.

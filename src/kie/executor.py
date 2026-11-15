@@ -315,6 +315,10 @@ class WorkflowExecutor:
         if not self.policy.authorize(request):
             raise AuthorizationDenied("execution policy denied this workflow/engine/input combination")
 
+        started = self.workflow_store.start_step(run_uuid, step_id, now=timestamp)
+        if started.status is not StepStatus.RUNNING:
+            return started
+
         adapter = self.adapters.get(step.engine_id)
         if adapter is None:
             self.workflow_store.mark_unavailable(
@@ -322,9 +326,6 @@ class WorkflowExecutor:
             )
             raise AdapterUnavailable(f"no adapter registered for engine {step.engine_id}")
 
-        started = self.workflow_store.start_step(run_uuid, step_id, now=timestamp)
-        if started.status is not StepStatus.RUNNING:
-            return started
         request = self._request(run, started, inputs, started.attempt_count)
 
         try:
@@ -334,7 +335,7 @@ class WorkflowExecutor:
             )
         except asyncio.TimeoutError:
             deadline = timestamp + timedelta(seconds=started.timeout_seconds)
-            self.workflow_store.expire_timed_out_steps(now=deadline)
+            self.workflow_store.expire_timed_out_steps(now=deadline, run_id=run_uuid)
             current = self.workflow_store.get_run(run_uuid)
             return next(item for item in current.steps if item.step_id == step_id)
         except asyncio.CancelledError:
@@ -409,10 +410,23 @@ class WorkflowExecutor:
         completed_ids = {
             step.step_id for step in run.steps if step.status is StepStatus.COMPLETED
         }
+        terminal_dependency_states = {
+            StepStatus.SKIPPED, StepStatus.UNAVAILABLE, StepStatus.NO_DATA,
+            StepStatus.FAILED, StepStatus.TIMED_OUT, StepStatus.CANCELLED,
+            StepStatus.BLOCKED,
+        }
+        states_by_id = {step.step_id: step.status for step in run.steps}
         for step in run.steps:
             if step.status is not StepStatus.PENDING:
                 continue
-            if all(dependency in completed_ids for dependency in step.depends_on):
+            dependencies_completed = all(
+                dependency in completed_ids for dependency in step.depends_on
+            )
+            dependency_terminal = any(
+                states_by_id[dependency] in terminal_dependency_states
+                for dependency in step.depends_on
+            )
+            if dependencies_completed or dependency_terminal:
                 return await self.execute_step(
                     run.run_id,
                     step.step_id,

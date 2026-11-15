@@ -374,3 +374,67 @@ def test_explicit_policy_rejects_input_sensitivity_without_grant(tmp_path):
             run.run_id, "review", input_event_ids=(source.event_id,), now=NOW
         ))
     assert adapter.calls == 0
+
+
+def test_execute_next_propagates_skipped_optional_dependency(tmp_path):
+    workflow = WorkflowDefinition("optional_chain", "1.0", (
+        WorkflowStep("primary", "critical_thinking"),
+        WorkflowStep("optional_source", "emotion", required=False),
+        WorkflowStep("optional_followup", "reliability", depends_on=("optional_source",), required=False),
+    ))
+    path = tmp_path / "optional-chain.sqlite3"
+    event_store = SQLiteEventStore(path)
+    workflow_store = SQLiteWorkflowStore(path)
+    plan = plan_workflow(
+        workflow,
+        available_engines={"critical_thinking", "emotion", "reliability"},
+    )
+    run = workflow_store.create_run(workflow, plan, now=NOW)
+    adapter = StaticAdapter(event_factory=lambda request: make_event(request.run_id, request))
+    executor = WorkflowExecutor(
+        workflow_store=workflow_store,
+        event_store=event_store,
+        adapters=AdapterRegistry({"critical_thinking": adapter}),
+        policy=AllowPolicy(),
+    )
+
+    primary = asyncio.run(executor.execute_next(run.run_id, now=NOW))
+    assert primary.step_id == "primary"
+    assert primary.status is StepStatus.COMPLETED
+
+    workflow_store.skip_step(
+        run.run_id, "optional_source", reason="not needed", now=NOW
+    )
+    followup = asyncio.run(executor.execute_next(run.run_id, now=NOW))
+
+    assert followup.step_id == "optional_followup"
+    assert followup.status is StepStatus.SKIPPED
+    assert workflow_store.get_run(run.run_id).status is RunStatus.COMPLETED
+    assert adapter.calls == 1
+
+
+def test_executor_timeout_only_expires_the_current_run(tmp_path):
+    path = tmp_path / "scope-timeout.sqlite3"
+    event_store = SQLiteEventStore(path)
+    workflow_store = SQLiteWorkflowStore(path)
+    workflow = make_workflow(timeout=1)
+    plan = plan_workflow(workflow, available_engines={"critical_thinking"})
+    run_a = workflow_store.create_run(workflow, plan, now=NOW)
+    run_b = workflow_store.create_run(workflow, plan, now=NOW)
+    workflow_store.start_step(run_b.run_id, "review", now=NOW)
+
+    class SlowAdapter:
+        engine_id = "critical_thinking"
+        async def execute(self, request):
+            await asyncio.sleep(2)
+            return ExecutionResult(outcome=ExecutionOutcome.FAILED, reason="late")
+
+    executor = WorkflowExecutor(
+        workflow_store=workflow_store, event_store=event_store,
+        adapters=AdapterRegistry({"critical_thinking": SlowAdapter()}),
+        policy=AllowPolicy(),
+    )
+    # Reconcile the second run as still RUNNING; execute_step on run A times out.
+    step = asyncio.run(executor.execute_step(run_a.run_id, "review", now=NOW))
+    assert step.status is StepStatus.TIMED_OUT
+    assert workflow_store.get_run(run_b.run_id).steps[0].status is StepStatus.RUNNING
