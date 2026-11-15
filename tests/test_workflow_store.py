@@ -94,6 +94,10 @@ def test_successful_steps_run_in_order_and_complete_workflow(tmp_path):
         store.complete_step(run.run_id, "reliability_check", now=NOW + timedelta(seconds=4))
         store.start_step(run.run_id, "evidence_check", now=NOW + timedelta(seconds=5))
         store.complete_step(run.run_id, "evidence_check", now=NOW + timedelta(seconds=6))
+        store.skip_step(
+            run.run_id, "optional_reflection",
+            reason="no additional reflection required", now=NOW + timedelta(seconds=7),
+        )
 
         completed = store.get_run(run.run_id)
         assert completed.status is RunStatus.COMPLETED
@@ -319,3 +323,16 @@ def test_duplicate_run_id_is_rejected_without_partial_rows(tmp_path):
         with pytest.raises(Exception, match="could not create workflow run"):
             store.create_run(workflow, make_plan(workflow), run_id=run_id, now=NOW)
         assert len(store.get_run(run_id).steps) == 4
+
+
+def test_workflow_does_not_complete_while_available_optional_step_is_pending(tmp_path):
+    workflow = make_workflow()
+    with SQLiteWorkflowStore(tmp_path / "workflow.sqlite3") as store:
+        run = store.create_run(workflow, make_plan(workflow), now=NOW)
+        for step_id in ("initial_review", "reliability_check", "evidence_check"):
+            store.start_step(run.run_id, step_id, now=NOW)
+            store.complete_step(run.run_id, step_id, now=NOW + timedelta(seconds=1))
+        current = store.get_run(run.run_id)
+        optional = next(s for s in current.steps if s.step_id == "optional_reflection")
+        assert optional.status is StepStatus.PENDING
+        assert current.status is RunStatus.PENDING
