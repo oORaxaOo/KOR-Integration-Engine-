@@ -76,3 +76,18 @@ def test_event_from_dict_rejects_invalid_timestamp():
     envelope["recorded_at"] = "not-a-timestamp"
     with pytest.raises(ValueError, match="timestamp"):
         event_from_dict(envelope)
+
+
+def test_event_from_dict_rejects_non_array_collection_fields():
+    event = IntegrationEvent(
+        event_id=uuid4(), schema_version=1, event_type="simple_event",
+        producer_engine="reliability", producer_version="0.1",
+        occurred_at=NOW, recorded_at=NOW,
+        epistemic_status=EpistemicStatus.OBSERVED,
+        sensitivity=Sensitivity.INTERNAL,
+        allowed_consumers=("evidence",), payload={},
+    )
+    envelope = event_to_dict(event)
+    envelope["evidence_refs"] = "not-an-array"
+    with pytest.raises(ValueError, match="JSON array"):
+        event_from_dict(envelope)

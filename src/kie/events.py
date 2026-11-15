@@ -230,3 +230,86 @@ def event_to_dict(event: IntegrationEvent) -> dict[str, Any]:
         "idempotency_key": event.idempotency_key,
         "verification": verification,
     }
+
+
+def _parse_datetime(value: Any, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be an ISO-8601 timestamp string")
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a valid ISO-8601 timestamp") from exc
+
+
+def event_from_dict(data: Mapping[str, Any]) -> IntegrationEvent:
+    """Restore and validate an event from the public JSON protocol envelope."""
+    required = {
+        "event_id", "schema_version", "event_type", "producer_engine",
+        "producer_version", "occurred_at", "recorded_at", "epistemic_status",
+        "sensitivity", "allowed_consumers", "payload", "evidence_refs",
+        "parent_event_ids", "session_id", "task_id", "correlation_id",
+        "expires_at", "hop_count", "idempotency_key", "verification",
+    }
+    if not isinstance(data, Mapping):
+        raise ValueError("event envelope must be an object")
+    missing = required - set(data)
+    unknown = set(data) - required
+    if missing:
+        raise ValueError(f"event envelope is missing fields: {', '.join(sorted(missing))}")
+    if unknown:
+        raise ValueError(f"event envelope contains unknown fields: {', '.join(sorted(unknown))}")
+
+    for array_field in ("allowed_consumers", "evidence_refs", "parent_event_ids"):
+        if not isinstance(data[array_field], list):
+            raise ValueError(f"{array_field} must be a JSON array")
+
+    raw_verification = data["verification"]
+    verification = None
+    if raw_verification is not None:
+        if not isinstance(raw_verification, Mapping):
+            raise ValueError("verification must be an object or null")
+        expected_verification_fields = {
+            "verifier", "criteria", "scope", "verified_at", "evidence_refs",
+        }
+        if set(raw_verification) != expected_verification_fields:
+            raise ValueError("verification contains missing or unknown fields")
+        if not isinstance(raw_verification["evidence_refs"], list):
+            raise ValueError("verification.evidence_refs must be a JSON array")
+        verification = Verification(
+            verifier=raw_verification["verifier"],
+            criteria=raw_verification["criteria"],
+            scope=raw_verification["scope"],
+            verified_at=_parse_datetime(raw_verification["verified_at"], "verification.verified_at"),
+            evidence_refs=tuple(raw_verification["evidence_refs"]),
+        )
+
+    try:
+        event_id = UUID(data["event_id"])
+        parents = tuple(UUID(item) for item in data["parent_event_ids"])
+        occurred_at = _parse_datetime(data["occurred_at"], "occurred_at")
+        recorded_at = _parse_datetime(data["recorded_at"], "recorded_at")
+        expires_at = None if data["expires_at"] is None else _parse_datetime(data["expires_at"], "expires_at")
+        return IntegrationEvent(
+            event_id=event_id,
+            schema_version=data["schema_version"],
+            event_type=data["event_type"],
+            producer_engine=data["producer_engine"],
+            producer_version=data["producer_version"],
+            occurred_at=occurred_at,
+            recorded_at=recorded_at,
+            epistemic_status=EpistemicStatus(data["epistemic_status"]),
+            sensitivity=Sensitivity(data["sensitivity"]),
+            allowed_consumers=tuple(data["allowed_consumers"]),
+            payload=data["payload"],
+            evidence_refs=tuple(data["evidence_refs"]),
+            parent_event_ids=parents,
+            session_id=data["session_id"],
+            task_id=data["task_id"],
+            correlation_id=data["correlation_id"],
+            expires_at=expires_at,
+            hop_count=data["hop_count"],
+            idempotency_key=data["idempotency_key"],
+            verification=verification,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid event envelope: {exc}") from exc
