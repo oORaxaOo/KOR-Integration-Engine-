@@ -27,6 +27,7 @@ def make_bridge_source(task_id: str) -> str:
                          "evidence_sequence": 1, "record_consistent": True,
                          "report": {"checks": [{"detail": "private check"}]}},
     }
+    report_json_literal = json.dumps(json.dumps(report))
     return f"""
 import json
 import sys
@@ -34,7 +35,8 @@ for raw in sys.stdin:
     request = json.loads(raw)
     assert request["method"] == "get_task_report"
     assert request["params"]["task_id"] == {task_id!r}
-    print(json.dumps({{"jsonrpc": "2.0", "id": request["id"], "result": {json.dumps(report)}}}), flush=True)
+    print(json.dumps({{"jsonrpc": "2.0", "id": request["id"],
+        "result": json.loads({report_json_literal})}}), flush=True)
 """
 
 
