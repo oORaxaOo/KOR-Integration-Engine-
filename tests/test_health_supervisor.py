@@ -179,3 +179,44 @@ def test_unavailable_kie_database_does_not_get_created_by_health_check(tmp_path)
     assert report["status"] == "healthy"
     assert report["event_store"] == "not_initialized"
     assert not supervisor.kie_database.exists()
+
+
+
+def test_critical_reliability_snapshot_creates_critical_health_issue(tmp_path):
+    now = datetime.now(timezone.utc)
+    supervisor, database = _make_supervisor(tmp_path, now=now)
+    event = IntegrationEvent(
+        event_id=uuid4(),
+        schema_version=1,
+        event_type="reliability.runtime_snapshot",
+        producer_engine="reliability",
+        producer_version="0.1.0",
+        occurred_at=now,
+        recorded_at=now,
+        epistemic_status=EpistemicStatus.OBSERVED,
+        sensitivity=Sensitivity.INTERNAL,
+        allowed_consumers=("critical_thinking",),
+        payload={
+            "api_requests": 4,
+            "api_successes": 2,
+            "api_errors": 2,
+            "tool_calls": 3,
+            "tool_blocks": 1,
+            "anomaly_count": 2,
+            "context_pressure": "critical",
+            "context_warning_events": 1,
+            "context_critical_events": 1,
+            "model_turns": 3,
+            "user_task_labels": 0,
+        },
+    )
+    with SQLiteEventStore(database) as store:
+        store.append(event)
+
+    report = supervisor.get_report()
+    codes = {issue["code"]: issue["severity"] for issue in report["issues"]}
+
+    assert report["status"] == "degraded"
+    assert codes["reliability_context_pressure_critical"] == "critical"
+    assert codes["reliability_api_errors"] == "warning"
+    assert codes["reliability_response_anomalies"] == "warning"
