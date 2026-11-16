@@ -24,7 +24,7 @@ def _cte_message():
             "intent": "project_proposal",
             "review_level": "critical",
             "user_requested": False,
-            "signals": ["datenschutz", "integration"],
+            "signals": ["datenschutz", "security"],
         },
     )
 
@@ -32,7 +32,7 @@ def _cte_message():
 def _reliability_message():
     return make_engine_event_message(
         "reliability",
-        "reliability.session_snapshot",
+        "reliability.runtime_snapshot",
         {
             "api_requests": 8,
             "api_successes": 7,
