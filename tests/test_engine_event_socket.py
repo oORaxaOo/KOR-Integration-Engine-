@@ -161,3 +161,55 @@ def test_server_rejects_oversized_message(tmp_path):
         assert not database.exists()
     finally:
         server.shutdown()
+
+
+
+def test_event_contract_accepts_content_free_engine_failure_observations():
+    cases = (
+        ("critical_thinking", "critical_thinking.hook_failure", {"failure_code": "hook_exception"}),
+        ("emotion", "emotion.reflection_failed", {"failure_code": "reflection_handler_error"}),
+        ("evidence", "evidence.verification_unavailable", {"failure_code": "policy_invalid"}),
+    )
+    for engine_id, event_type, payload in cases:
+        event = _event_from_message(make_engine_event_message(engine_id, event_type, payload))
+        assert event.producer_engine == engine_id
+        assert event.payload == payload
+        assert event.epistemic_status.value == "observed"
+
+
+def test_event_contract_rejects_raw_engine_failure_diagnostics():
+    message = make_engine_event_message(
+        "evidence",
+        "evidence.verification_unavailable",
+        {"failure_code": "policy_invalid", "exception": "private /home/user path"},
+    )
+    with pytest.raises(EngineEventRejected):
+        _event_from_message(message)
+
+
+def test_event_contract_rejects_unknown_engine_failure_code():
+    message = make_engine_event_message(
+        "emotion",
+        "emotion.reflection_failed",
+        {"failure_code": "database_password"},
+    )
+    with pytest.raises(EngineEventRejected):
+        _event_from_message(message)
+
+
+
+def test_server_reports_running_state_and_uses_private_parent_directories(tmp_path):
+    database = tmp_path / "private-db" / "kie.sqlite3"
+    socket_path = tmp_path / "private-run" / "kie.sock"
+    server = EngineEventSocketServer(socket_path, database)
+
+    assert server.is_running is False
+    server.start()
+    try:
+        assert server.is_running is True
+        assert stat.S_IMODE(socket_path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(database.parent.stat().st_mode) == 0o700
+    finally:
+        server.shutdown()
+
+    assert server.is_running is False
