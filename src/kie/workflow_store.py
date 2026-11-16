@@ -710,22 +710,32 @@ class SQLiteWorkflowStore:
                     connection.execute("ROLLBACK")
                 raise
 
-    def expire_timed_out_steps(self, *, now: datetime | None = None) -> tuple[tuple[UUID, str], ...]:
-        """Mark expired RUNNING steps as timed out; no background timer is created."""
+    def expire_timed_out_steps(
+        self, *, now: datetime | None = None,
+        run_id: UUID | str | None = None,
+    ) -> tuple[tuple[UUID, str], ...]:
+        """Mark overdue RUNNING steps, optionally scoped to one workflow run.
+
+        Omitting run_id performs an explicit store-wide timeout sweep. Callers
+        handling one run should pass its ID to avoid changing unrelated runs.
+        """
         timestamp = _aware(now or datetime.now(timezone.utc), "now")
         with self._lock:
             self._assert_open()
             connection = self._connection
             connection.execute("BEGIN IMMEDIATE")
             try:
-                rows = connection.execute(
-                    """
-                    SELECT * FROM kie_workflow_steps
-                    WHERE status = 'running' AND deadline_at IS NOT NULL AND deadline_at <= ?
-                    ORDER BY run_id, step_id
-                    """,
-                    (_iso(timestamp),),
-                ).fetchall()
+                run_filter = None if run_id is None else self._run_row(run_id)["run_id"]
+                query = (
+                    "SELECT * FROM kie_workflow_steps "
+                    "WHERE status = 'running' AND deadline_at IS NOT NULL AND deadline_at <= ?"
+                )
+                parameters: list[Any] = [_iso(timestamp)]
+                if run_filter is not None:
+                    query += " AND run_id = ?"
+                    parameters.append(run_filter)
+                query += " ORDER BY run_id, step_id"
+                rows = connection.execute(query, parameters).fetchall()
                 changed: list[tuple[UUID, str]] = []
                 affected: set[str] = set()
                 for row in rows:

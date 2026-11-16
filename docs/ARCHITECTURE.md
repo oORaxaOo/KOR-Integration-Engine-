@@ -23,32 +23,45 @@ their internal data:
   structural parts of system reliability.
 
 ## Non-goals
-KIE v0.x will not make LLM calls, execute arbitrary tools or commands, read or
-write engine databases directly, silently promote hypotheses to facts, rewrite
-engine policies or its own permissions, or claim consciousness from emergent
-behavior. Emergence observation is not a foundation delivery gate.
+KIE v0.x will not make LLM calls, execute arbitrary tools or shell commands,
+read or write engine databases directly, silently promote hypotheses to facts,
+rewrite engine policies or its own permissions, or claim consciousness from
+emergent behavior. Emergence observation is not a foundation delivery gate.
 
-## Coordination
+## Coordination and state
 A versioned workflow declares which engine steps belong to a task, which are
 required, their dependencies, and timeouts. The planner creates a deterministic
 availability-aware plan. The Workflow State Manager persists runs and records
-step transitions, but does not execute engine code.
+step transitions. Required non-success outcomes fail the run; optional
+non-success outcomes can produce PARTIAL.
 
-Runtime states remain distinct:
-- PENDING: eligible but not started;
-- RUNNING: an execution has been explicitly started;
-- COMPLETED: the caller recorded a successful result;
-- SKIPPED: an optional step was not needed;
-- UNAVAILABLE: a required or optional engine could not be reached;
-- NO_DATA: an engine responded but supplied no usable result;
-- FAILED: execution failed;
-- TIMED_OUT: the declared deadline passed before completion;
-- BLOCKED: a required dependency or engine condition prevents progress;
-- CANCELLED: execution was explicitly cancelled.
+Run states are PENDING, RUNNING, COMPLETED, PARTIAL, FAILED, BLOCKED, and
+CANCELLED. Step states include PENDING, RUNNING, COMPLETED, SKIPPED,
+UNAVAILABLE, NO_DATA, FAILED, TIMED_OUT, CANCELLED, and BLOCKED.
 
-Run-level outcomes are PENDING, RUNNING, COMPLETED, PARTIAL, FAILED, BLOCKED,
-and CANCELLED. Required non-success outcomes fail the run; optional non-success
-outcomes can produce PARTIAL. Missing information remains missing.
+## Controlled executor
+The executor runs one explicitly selected pending step at a time. It calls
+only adapter objects registered by the host; it never imports modules by
+name, scans plugin folders, runs shell commands, or reads engine databases.
+
+A default-deny application policy must explicitly permit the workflow ID and
+engine ID. Input events must be selected by the caller, must include the
+target engine in their consumer allowlist, must not be expired, and must have
+a sensitivity permitted by policy. The executor then passes those exact
+records to the adapter.
+
+A successful adapter result must contain an IntegrationEvent whose producer
+matches the registered engine, whose task ID matches the workflow run, and
+whose idempotency key identifies the exact execution attempt. The event is
+persisted before the workflow step is marked complete. On recovery, a RUNNING
+step is reconciled against that attempt key; if the event is already recorded,
+the state is completed without calling the adapter again. If no result exists,
+the executor refuses to launch the step again automatically.
+
+The async timeout cancels the adapter coroutine cooperatively. It cannot kill
+a blocked native operation or external process. A real adapter must enforce
+hard process/network timeouts and make external operations idempotent. The
+current executor has no background scheduler or whole-workflow daemon.
 
 ## Priority
 1. System safety, privacy, and authorization.
@@ -66,58 +79,16 @@ event envelopes, provenance, routing history, workflow state, and curated
 cross-engine knowledge. Adapters expose only authorized fields. KIE does not
 query arbitrary engine databases.
 
-The event ledger is an append-only record of integration events, not a shared
-transcript or a replacement for engine memory. The workflow transition table
-is an append-only history; run/step tables are the current-state projections
-updated transactionally alongside each transition. Corrections are new linked
-events; existing event records are not rewritten.
+The event ledger is append-only. Workflow transition history is append-only;
+run/step tables are mutable current-state projections updated transactionally.
+Corrections are new linked events; existing event records are not rewritten.
 
-## Event ledger
-The SQLite ledger assigns a monotonic sequence, stores a canonical event
-envelope, applies event-ID and producer-scoped idempotency checks in a write
-transaction, and links each entry to the previous entry with a SHA-256 hash.
-Database triggers reject ordinary UPDATE and DELETE operations. Integrity
-verification checks SQLite consistency, envelope digests, indexed metadata,
-sequence continuity, and the hash chain.
-
-The hash chain is tamper-evident, not tamper-proof. An actor with control of
-the database file can remove triggers or rewrite data; truncating the final
-records cannot be detected without an independently stored external anchor.
-The ledger does not encrypt payloads. File permissions, encryption at rest,
-backup handling, and host authentication remain separate requirements.
-
-Historical event replay is read-only: it returns events in ledger order and
-never re-invokes engines. Event dispatch and retries belong to a later executor.
-
-## Workflow State Manager
-The state manager may share the event store's SQLite file, but maintains its
-own schema version. Every run stores a snapshot of the workflow identity and
-each step's engine, dependencies, required flag, and timeout. State transitions
-are committed in a transaction with the corresponding current-state update.
-The transition history rejects ordinary UPDATE and DELETE statements.
-
-Retries are explicit, bounded, and recorded as PENDING -> RUNNING attempt
-transitions. A deadline is calculated when a step starts. The current phase
-provides a polling method to mark overdue steps TIMED_OUT; it does not start
-background threads or kill a running engine. A future executor must enforce
-actual process/network timeouts and call the state manager with the result.
-
-A process restart does not erase runs. The next host process can list pending
-and running runs, inspect step states and transition history, and reconcile
-expired deadlines before it considers resuming. Persisted RUNNING means the
-work had been started, not that it is still alive after a crash. The executor
-must check the engine's real availability before resuming or retrying.
-
-The transition ledger is append-only but the current-state tables are mutable
-projections, not independently tamper-proof. The database remains protected by
-host file permissions and backups; SQLite triggers are not authentication.
-
-## Feedback-loop controls
-The protocol includes event IDs, parent IDs, correlation IDs, idempotency
-keys, expiry, and hop limits. The router enforces consumer allowlists.
-Persistence enforces event ID uniqueness and producer-scoped idempotency.
-An engine cannot re-ingest its own event as new evidence without independent
-information.
+## Persistence security
+The SQLite ledger uses canonical envelopes, idempotency checks, and a
+SHA-256-linked history. The hash chain is tamper-evident, not tamper-proof.
+File-level access can bypass triggers and rewrite the database. The database
+does not encrypt payloads or authenticate producers. File permissions,
+encryption at rest, backup handling, and host authentication remain separate.
 
 ## Emergence observation
 Emergence observation is deferred. A later observer may compare isolated
@@ -129,8 +100,8 @@ readiness.
 2. Establish deterministic workflow contracts and planning.
 3. Implement and audit the append-only event ledger.
 4. Persist workflow execution state and failure semantics.
-5. Build a separately permissioned executor.
+5. Add the controlled adapter executor.
 6. Add one read-only adapter at a time.
-7. Test failure, missing-data, permission, and replay behavior.
+7. Test failures, missing data, permission boundaries, timeouts, and recovery.
 8. Add curated shared knowledge.
 9. Only then consider controlled emergence studies.

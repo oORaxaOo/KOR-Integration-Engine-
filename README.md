@@ -6,11 +6,11 @@ exchange without replacing engine autonomy.
 
 ## Current status
 
-**Foundation v0.4 under development.** The repository contains the shared
-event contract, deterministic routing and planning, an append-only SQLite
-event ledger, and durable workflow run/step state with an append-only
-transition history. Automated tests run in CI on Python 3.11, 3.12, and 3.13.
-There is no live Hermes or WhatsApp integration.
+**Foundation v0.5 under development.** The repository contains the shared
+event contract, deterministic planning, an append-only SQLite event ledger,
+durable workflow run/step state, and a controlled single-step async executor.
+Automated tests run in CI on Python 3.11, 3.12, and 3.13. There is no live
+Hermes or WhatsApp integration.
 
 ## Design principles
 
@@ -23,20 +23,23 @@ There is no live Hermes or WhatsApp integration.
 - No LLM dependency is required for the KIE foundation.
 - Planning is deterministic and separate from execution.
 - Event and transition histories are append-only; corrections are new records.
+- Engine adapters are explicitly registered; no arbitrary dynamic imports.
 
 ## Repository map
 
 - docs/ARCHITECTURE.md — system boundaries and rollout.
 - docs/PROTOCOL.md — shared event contract.
-- docs/WORKFLOWS.md — workflow planning and execution-state contract.
-- docs/EVENT_STORE.md — persistence, idempotency, integrity, and security limits.
+- docs/WORKFLOWS.md — workflow planning and state contract.
+- docs/EVENT_STORE.md — event persistence, idempotency, integrity, and limits.
+- docs/EXECUTOR.md — adapter, authorization, dispatch, and recovery contract.
 - schemas/integration-event-v1.schema.json — machine-readable event schema.
 - src/kie/events.py — immutable event model and envelope serialization.
 - src/kie/routing.py — pure routing policy.
 - src/kie/workflows.py — workflow definitions and deterministic planner.
 - src/kie/event_store.py — SQLite append-only event ledger.
 - src/kie/workflow_store.py — durable workflow state manager.
-- tests/ — contract, routing, schema, store, and workflow tests.
+- src/kie/executor.py — controlled async adapter executor.
+- tests/ — contract, routing, schema, persistence, and executor tests.
 
 ## Development
 
@@ -46,13 +49,22 @@ library.
     python -m pip install -e ".[dev]"
     python -m pytest
 
-The event and workflow stores can share one SQLite file. Workflow transitions
-are append-only, while current run/step rows are mutable projections maintained
-by the store. The database does not encrypt payloads or provide host-level
-authentication. Protect it with operating-system permissions and backups.
+The executor defaults to no grants: a host must explicitly register adapters
+and provide an allowlist policy for workflow IDs, engine IDs, and input-event
+sensitivity. It passes only caller-selected event IDs to an adapter and checks
+the event consumer allowlist and expiry before dispatch.
 
-The state manager does not launch engines or make network calls. A caller or a
-future executor must explicitly start steps, submit outcomes, schedule retries,
-and poll for expired deadlines. Retrying is bounded and manual in this phase.
-There is no background scheduler, automatic retry loop, or live Hermes/WhatsApp
-integration.
+A completed adapter response must include an event produced by the engine
+assigned to that step, linked to the workflow run and attempt through its
+task ID and idempotency key. A recorded result can be reconciled after a crash
+without calling the adapter a second time.
+
+The executor's async timeout uses cooperative cancellation. It does not kill
+a blocked native call or external process; adapters must apply hard limits at
+their own process/network boundary. A RUNNING step with no recorded result is
+never launched a second time automatically.
+
+The event and workflow databases do not encrypt payloads or authenticate
+event producers. Protect database files with operating-system permissions
+and backups. The KIE is not yet a production security boundary or a live
+Hermes/WhatsApp integration.
