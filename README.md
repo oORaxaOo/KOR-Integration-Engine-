@@ -43,4 +43,4 @@ python -m pytest
 
 ## Engine event ingress
 
-KIE optionally accepts privacy-bounded runtime events from the Critical Thinking, Reliability, and Emotion engines over a local Unix-domain socket. Each engine remains independent; KIE validates an explicit event allowlist and records the metadata in its own append-only event store. The interface never receives raw prompts, responses, tool arguments/results, or reflection text. See [Engine Event Ingress](docs/ENGINE_EVENT_INGRESS.md).
+KIE optionally accepts privacy-bounded runtime events from the Critical Thinking, Reliability, and Emotion engines over a local Unix-domain socket. Each engine remains independent; KIE validates an explicit event allowlist and records the metadata in its own append-only event store. The interface never receives raw prompts, responses, tool arguments/results, or reflection text. Hermes can inspect the latest sanitized metadata through the read-only `kie_engine_events` tool when explicitly asked; no automatic polling or event dispatch occurs. See [Engine Event Ingress](docs/ENGINE_EVENT_INGRESS.md).
