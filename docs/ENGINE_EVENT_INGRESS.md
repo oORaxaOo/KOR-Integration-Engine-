@@ -23,7 +23,9 @@ engine_event_socket: /home/USER/.hermes/run/kie-engine-events.sock
 
 The receiver starts only when both KIE settings are present. Engine publishers
 are disabled when `kie_event_socket` is absent. The receiver creates the parent
-directory and binds a Unix socket with mode `0600`.
+directory and binds a Unix socket with mode `0600`. The complete Hermes plugin
+entry names and settings are shown in
+[`examples/hermes-kie-config.example.yaml`](../examples/hermes-kie-config.example.yaml).
 
 ## Accepted event contracts
 
