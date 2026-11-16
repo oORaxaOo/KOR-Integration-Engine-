@@ -10,7 +10,7 @@ plugins:
   - repo: oORaxaOo/Reliability-Engine
     ref: db9fde87698f0fee245c1f261529014040fe3d7c
   - repo: oORaxaOo/Emotion-Engine
-    ref: 7c06bfd0f041f5d18a7f5aef65131428d05dd91e
+    ref: 38783a43bde84cf1aa85f2aa73b722db0d827a5a
   - repo: oORaxaOo/KOR-Integration-Engine-
     subdir: plugins/hermes-kie-evidence
     ref: 681f60b53cd5b8e630fcae65a0b3d9f267ead477
