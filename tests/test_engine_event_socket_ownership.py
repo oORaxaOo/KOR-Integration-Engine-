@@ -1,5 +1,8 @@
 import multiprocessing
+import socket
 import sys
+
+import pytest
 
 from kie.health import HealthSupervisor
 from kie.transports.engine_event_socket import EngineEventSocketServer
@@ -154,3 +157,21 @@ def test_health_report_marks_local_receiver_as_owner(tmp_path):
         assert report["event_ingress_role"] == "owner"
     finally:
         owner.shutdown()
+
+
+def test_server_refuses_to_replace_an_active_socket_without_the_kie_lock(tmp_path):
+    socket_path = tmp_path / "run" / "kie-events.sock"
+    socket_path.parent.mkdir(parents=True)
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    listener.listen(1)
+    server = EngineEventSocketServer(socket_path, tmp_path / "kie.sqlite3")
+
+    try:
+        with pytest.raises(ValueError, match="active without the KIE lock"):
+            server.start()
+        assert socket_path.is_socket()
+    finally:
+        listener.close()
+        socket_path.unlink(missing_ok=True)
+        server.shutdown()
