@@ -52,3 +52,21 @@ The pinned `hermes-pack.yaml` installs the complete five-plugin KOR stack in one
 Hermes plugin-pack operation: Evidence Engine, Critical Thinking, Reliability,
 Emotion, and KIE. The Evidence Engine remains an independent plugin; KIE is the
 coordinator. See [Engine Stack Installation](docs/ENGINE_STACK_INSTALL.md).
+
+
+## KIE health supervision
+
+KIE registers the read-only `kie_system_health` tool and checks the active Hermes
+plugin registry, the local event receiver, the Evidence bridge configuration,
+and recent allowlisted operational failure events from all four engines. It
+injects a deduplicated health alert into the next normal `pre_llm_call` context
+when the observed state changes. This does not initiate another LLM call.
+
+The observer does not continuously poll idle engines, automatically restart
+plugins, modify engine code, or inspect their private databases. A missing event
+alone is not treated as failure. The report distinguishes an Evidence database
+that has not yet been initialized from an actual bridge/configuration failure.
+
+See [Engine Stack Installation](docs/ENGINE_STACK_INSTALL.md) for the five-plugin
+pack, seeded shared socket settings, Evidence policy setup, and live verification
+procedure.
