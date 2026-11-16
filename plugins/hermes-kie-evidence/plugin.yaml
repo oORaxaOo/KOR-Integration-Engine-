@@ -1,26 +1,30 @@
 name: kor-kie-evidence
-version: "0.8.0"
-description: KOR Integration Engine tools and bounded engine-event ingress for Hermes Agent
+version: "0.10.0"
+manifest_version: 2
+description: KOR Integration Engine coordination, event supervision, and Evidence adapter for Hermes Agent
 requires_hermes: ">=0.23.1"
 provides_tools:
   - kie_evidence_lookup
   - kie_engine_events
+  - kie_system_health
+provides_hooks:
+  - pre_llm_call
 config_schema:
   evidence_python:
     type: string
     default: ""
   evidence_source_root:
     type: string
-    default: ""
+    default: "~/.hermes/plugins/evidence-engine"
   evidence_database:
     type: string
-    default: ""
+    default: "~/.hermes/evidence-engine/evidence.sqlite3"
   kie_database:
     type: string
-    default: ""
+    default: "~/.hermes/kie/kie.sqlite3"
   timeout_seconds:
     type: integer
     default: 10
   engine_event_socket:
     type: string
-    default: ""
+    default: "~/.hermes/run/kie-engine-events.sock"
