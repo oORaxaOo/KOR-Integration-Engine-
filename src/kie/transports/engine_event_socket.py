@@ -198,11 +198,23 @@ class EngineEventSocketServer:
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
 
+    @property
+    def is_running(self) -> bool:
+        """Whether the local event receiver thread is alive."""
+        with self._lock:
+            return self._server is not None and self._thread is not None and self._thread.is_alive()
+
     def start(self) -> None:
         with self._lock:
             if self._server is not None:
                 return
             self.socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if hasattr(os, "getuid") and self.database_path.parent.stat().st_uid == os.getuid():
+                try:
+                    self.database_path.parent.chmod(0o700)
+                except OSError:
+                    pass
             if os.path.lexists(self.socket_path):
                 info = os.lstat(self.socket_path)
                 if not stat.S_ISSOCK(info.st_mode):
