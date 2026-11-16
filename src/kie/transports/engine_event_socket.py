@@ -6,6 +6,7 @@ allowlist before writing anything to KIE's append-only event store.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,13 @@ _INTENTS = frozenset({
     "decision", "question", "unknown",
 })
 _REVIEW_LEVELS = frozenset({"review", "critical"})
+_CTE_SIGNALS = frozenset({
+    "sicherheit", "security", "datenschutz", "privacy", "zugriff", "berechtigung",
+    "irreversibel", "unwiderruflich", "migration", "löschen", "loeschen",
+    "produktive umgebung", "systemweit", "architektur ändern",
+    "architektur aendern", "komplette architektur",
+    "technical_claim_signal", "technical_project_signal",
+})
 _PRESSURE_LEVELS = frozenset({"disabled", "waiting", "normal", "warning", "critical"})
 _RELIABILITY_KINDS = frozenset({"provider_error", "tool_call_blocked", "response_anomaly"})
 _ANOMALIES = frozenset({
@@ -66,7 +74,8 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
         if (
             not isinstance(signals, list)
             or len(signals) > 8
-            or any(not isinstance(item, str) or not item.strip() or len(item) > 96 for item in signals)
+            or any(not isinstance(item, str) or item not in _CTE_SIGNALS for item in signals)
+            or len(set(signals)) != len(signals)
         ):
             raise EngineEventRejected("signals must contain at most eight short strings")
         return {
@@ -145,7 +154,7 @@ def _event_from_message(message: Any) -> IntegrationEvent:
         raise EngineEventRejected("event_id must use canonical UUID format")
     engine_id = message["engine_id"]
     event_type = message["event_type"]
-    if engine_id not in {"critical_thinking", "reliability", "emotion"}:
+    if not isinstance(engine_id, str) or engine_id not in {"critical_thinking", "reliability", "emotion"}:
         raise EngineEventRejected("unknown engine identity")
     if not isinstance(event_type, str):
         raise EngineEventRejected("event_type must be a string")
@@ -203,8 +212,11 @@ class EngineEventSocketServer:
                 try:
                     probe.settimeout(0.1)
                     probe.connect(str(self.socket_path))
-                except OSError:
-                    self.socket_path.unlink()
+                except OSError as exc:
+                    if exc.errno == errno.ECONNREFUSED:
+                        self.socket_path.unlink()
+                    elif exc.errno != errno.ENOENT:
+                        raise ValueError("could not safely inspect the existing socket") from exc
                 else:
                     raise ValueError("an engine event socket is already active")
                 finally:
