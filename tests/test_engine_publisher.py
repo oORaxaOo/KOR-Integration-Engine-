@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from kie.events import EpistemicStatus
+from kie.events import EpistemicStatus, event_to_dict
 from kie.event_store import SQLiteEventStore
 from kie.publisher import (
     publish_critical_thinking_review,
@@ -35,7 +35,8 @@ def test_critical_thinking_publication_records_only_bounded_review_metadata(tmp_
     assert event.epistemic_status is EpistemicStatus.OBSERVED
     assert event.payload["review_level"] == "critical"
     assert event.payload["reason_code"] == "explicit_request"
-    assert "original user message" not in json.dumps(event.payload).lower()
+    encoded = json.dumps(event_to_dict(event))
+    assert "original user message" not in encoded.lower()
 
 
 def test_critical_thinking_rejects_unknown_review_levels_before_opening_database(tmp_path):
@@ -82,7 +83,7 @@ def test_reliability_publication_minimizes_to_aggregate_runtime_counters(tmp_pat
     with SQLiteEventStore(database) as store:
         event = store.get_event(receipt.event_id).event
 
-    payload = event.payload
+    payload = event_to_dict(event)["payload"]
     assert event.producer_engine == "reliability"
     assert event.event_type == "reliability.runtime_snapshot"
     assert payload["model_turns"] == 9
@@ -122,17 +123,23 @@ def test_emotion_publication_contains_reflection_metadata_not_narrative(tmp_path
         evidence_ref_count=4,
         next_question_available=True,
         invocation_count=2,
-        narrative="This private reflection narrative must not be stored.",
     )
 
     with SQLiteEventStore(database) as store:
         event = store.get_event(receipt.event_id).event
 
+    payload = event_to_dict(event)["payload"]
     assert event.producer_engine == "emotion"
     assert event.event_type == "emotion.reflection_summary"
     assert event.epistemic_status is EpistemicStatus.HYPOTHESIS
-    assert event.payload["assessments"] == ["supported", "undetermined"]
-    assert "private reflection narrative" not in json.dumps(event.payload)
+    assert payload["assessments"] == ["supported", "undetermined"]
+    assert payload["narrative_storage"] is False
+    assert payload["persistent_emotional_memory"] is False
+    assert set(payload) == {
+        "status", "step_count", "steps_remaining", "assessments",
+        "hypothesis_count", "evidence_ref_count", "next_question_available",
+        "invocation_count", "narrative_storage", "persistent_emotional_memory",
+    }
 
 
 def test_emotion_rejects_invalid_assessment_before_opening_database(tmp_path):
