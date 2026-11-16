@@ -220,7 +220,7 @@ def _probe_socket(socket_path: Path) -> bool:
             client.settimeout(0.5)
             client.connect(str(socket_path))
             client.sendall(
-                json.dumps(_HEALTH_CONTROL_MESSAGE, separators=(",", ":")).encode("utf-8") + b"\\n"
+                json.dumps(_HEALTH_CONTROL_MESSAGE, separators=(",", ":")).encode("utf-8") + b"\n"
             )
             with client.makefile("rb") as stream:
                 response = stream.readline(1024)
@@ -339,7 +339,7 @@ class EngineEventSocketServer:
                         self.request.settimeout(1.0)
                         try:
                             line = self.rfile.readline(MAX_MESSAGE_BYTES + 1)
-                            if not line or len(line) > MAX_MESSAGE_BYTES or not line.endswith(b"\\n"):
+                            if not line or len(line) > MAX_MESSAGE_BYTES or not line.endswith(b"\n"):
                                 self._reply({"ok": False, "reason": "invalid_message_size"})
                                 return
                             message = json.loads(line.decode("utf-8"))
@@ -360,7 +360,7 @@ class EngineEventSocketServer:
 
                     def _reply(self, value: dict[str, Any]) -> None:
                         try:
-                            self.wfile.write(json.dumps(value, separators=(",", ":")).encode("utf-8") + b"\\n")
+                            self.wfile.write(json.dumps(value, separators=(",", ":")).encode("utf-8") + b"\n")
                             self.wfile.flush()
                         except OSError:
                             pass
