@@ -341,6 +341,41 @@ class SQLiteEventStore:
             rows = self._connection.execute(query, parameters).fetchall()
             return tuple(self._row_to_record(row) for row in rows)
 
+    def read_recent_events(
+        self,
+        *,
+        limit: int = 20,
+        producer_engine: str | None = None,
+        event_type: str | None = None,
+    ) -> tuple[EventRecord, ...]:
+        """Read the newest matching events, returned in chronological order."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_PAGE_SIZE:
+            raise ValueError(f"limit must be an integer from 1 to {_MAX_PAGE_SIZE}")
+
+        filters = (
+            ("producer_engine", producer_engine),
+            ("event_type", event_type),
+        )
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        for column, value in filters:
+            if value is not None:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{column} filter must be None or a non-empty string")
+                clauses.append(f"{column} = ?")
+                parameters.append(value)
+
+        query = "SELECT * FROM kie_events"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY sequence DESC LIMIT ?"
+        parameters.append(limit)
+
+        with self._lock:
+            self._assert_open()
+            rows = self._connection.execute(query, parameters).fetchall()
+            return tuple(self._row_to_record(row) for row in reversed(rows))
+
     def replay(self, *, after_sequence: int = 0, limit: int = 100) -> tuple[EventRecord, ...]:
         """Read historical events in order; does not dispatch or execute them."""
         return self.read_events(after_sequence=after_sequence, limit=limit)

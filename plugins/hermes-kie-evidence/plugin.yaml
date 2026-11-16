@@ -1,6 +1,26 @@
 name: kor-kie-evidence
-version: "0.7.0"
-description: Read-only Evidence Engine snapshots through the KOR Integration Engine
+version: "0.8.0"
+description: KOR Integration Engine tools and bounded engine-event ingress for Hermes Agent
 requires_hermes: ">=0.23.1"
 provides_tools:
   - kie_evidence_lookup
+  - kie_engine_events
+config_schema:
+  evidence_python:
+    type: string
+    default: ""
+  evidence_source_root:
+    type: string
+    default: ""
+  evidence_database:
+    type: string
+    default: ""
+  kie_database:
+    type: string
+    default: ""
+  timeout_seconds:
+    type: integer
+    default: 10
+  engine_event_socket:
+    type: string
+    default: ""

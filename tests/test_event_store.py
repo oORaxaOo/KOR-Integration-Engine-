@@ -217,3 +217,30 @@ def test_closed_store_rejects_operations(tmp_path):
     store.close()
     with pytest.raises(RuntimeError, match="closed"):
         store.count()
+
+
+def test_read_recent_events_returns_latest_matching_records_in_chronological_order(tmp_path):
+    records = (
+        make_event(event_type="ct_review", producer_engine="critical_thinking",
+                   allowed_consumers=("reliability",)),
+        make_event(event_type="reliability_error", producer_engine="reliability",
+                   allowed_consumers=("critical_thinking",)),
+        make_event(event_type="ct_review", producer_engine="critical_thinking",
+                   allowed_consumers=("reliability",)),
+        make_event(event_type="ct_review", producer_engine="critical_thinking",
+                   allowed_consumers=("reliability",)),
+    )
+    with SQLiteEventStore(tmp_path / "events.sqlite3") as store:
+        for event in records:
+            store.append(event)
+
+        recent = store.read_recent_events(limit=2, producer_engine="critical_thinking")
+
+        assert [item.sequence for item in recent] == [3, 4]
+        assert [item.event.event_type for item in recent] == ["ct_review", "ct_review"]
+
+
+def test_read_recent_events_validates_limit(tmp_path):
+    with SQLiteEventStore(tmp_path / "events.sqlite3") as store:
+        with pytest.raises(ValueError, match="limit"):
+            store.read_recent_events(limit=0)

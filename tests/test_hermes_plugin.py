@@ -1,11 +1,13 @@
 import asyncio
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from kie import EpistemicStatus, SQLiteEventStore
-from kie.hermes_plugin import register
+from kie.events import IntegrationEvent, Sensitivity
+from kie.hermes_plugin import _start_engine_event_ingress, register
 
 
 def make_bridge_source(task_id: str) -> str:
@@ -60,7 +62,10 @@ class FakeHermesContext:
 def test_register_adds_one_async_read_only_evidence_tool():
     ctx = FakeHermesContext({})
     register(ctx)
-    assert set(ctx.tools) == {"kie_evidence_lookup"}
+    assert set(ctx.tools) == {"kie_evidence_lookup", "kie_engine_events"}
+    event_entry = ctx.tools["kie_engine_events"]
+    assert event_entry["toolset"] == "kor_kie"
+    assert event_entry["schema"]["parameters"]["required"] == ["engine_id"]
     entry = ctx.tools["kie_evidence_lookup"]
     assert entry["is_async"] is True
     assert entry["toolset"] == "kor_kie"
@@ -129,3 +134,113 @@ def test_hermes_tool_fails_closed_when_settings_are_missing():
     result = json.loads(asyncio.run(handler({"evidence_task_id": str(uuid4())})))
     assert result["ok"] is False
     assert result["reason"] == "integration_not_configured"
+
+
+
+def test_register_starts_optional_engine_event_ingress(tmp_path):
+    socket_path = tmp_path / "run" / "kie-events.sock"
+    database = tmp_path / "kie.sqlite3"
+    ctx = FakeHermesContext({
+        "engine_event_socket": str(socket_path),
+        "kie_database": str(database),
+    })
+
+    register(ctx)
+    server = _start_engine_event_ingress(ctx)
+
+    assert server is not None
+    assert socket_path.is_socket()
+    server.shutdown()
+
+
+
+def test_kie_engine_events_tool_returns_only_recent_sanitized_events(tmp_path):
+    database = tmp_path / "kie.sqlite3"
+    now = datetime.now(timezone.utc)
+    cte = IntegrationEvent(
+        event_id=uuid4(),
+        schema_version=1,
+        event_type="critical_thinking.review_routed",
+        producer_engine="critical_thinking",
+        producer_version="0.1.0",
+        occurred_at=now,
+        recorded_at=now,
+        epistemic_status=EpistemicStatus.OBSERVED,
+        sensitivity=Sensitivity.INTERNAL,
+        allowed_consumers=("reliability",),
+        payload={
+            "intent": "project_proposal",
+            "review_level": "critical",
+            "user_requested": False,
+            "signals": ["security"],
+        },
+    )
+    emotion = IntegrationEvent(
+        event_id=uuid4(),
+        schema_version=1,
+        event_type="emotion.reflection_completed",
+        producer_engine="emotion",
+        producer_version="0.1.0",
+        occurred_at=now,
+        recorded_at=now,
+        epistemic_status=EpistemicStatus.OBSERVED,
+        sensitivity=Sensitivity.RESTRICTED,
+        allowed_consumers=("reliability",),
+        payload={
+            "status": "completed",
+            "step_count": 1,
+            "steps_remaining": 3,
+            "hypothesis_count": 1,
+            "limitations_count": 1,
+            "follow_up_pending": False,
+        },
+    )
+    with SQLiteEventStore(database) as store:
+        store.append(cte)
+        store.append(emotion)
+
+    ctx = FakeHermesContext({"kie_database": str(database)})
+    register(ctx)
+    handler = ctx.tools["kie_engine_events"]["handler"]
+
+    cte_result = json.loads(handler({"engine_id": "critical_thinking", "limit": 5}))
+    emotion_result = json.loads(handler({"engine_id": "emotion", "limit": 5}))
+
+    assert cte_result["ok"] is True
+    assert cte_result["event_count"] == 1
+    assert cte_result["events"][0]["payload"]["review_level"] == "critical"
+    assert emotion_result["ok"] is True
+    assert emotion_result["events"][0]["sensitivity"] == "restricted"
+    assert emotion_result["events"][0]["payload"]["hypothesis_count"] == 1
+    assert "finding" not in json.dumps(emotion_result)
+
+
+def test_kie_engine_events_tool_rejects_evidence_and_unknown_engines(tmp_path):
+    ctx = FakeHermesContext({"kie_database": str(tmp_path / "kie.sqlite3")})
+    register(ctx)
+    handler = ctx.tools["kie_engine_events"]["handler"]
+
+    result = json.loads(handler({"engine_id": "evidence"}))
+    assert result == {"ok": False, "reason": "invalid_engine_id"}
+
+
+def test_kie_engine_events_tool_fails_closed_without_kie_database():
+    ctx = FakeHermesContext({})
+    register(ctx)
+    handler = ctx.tools["kie_engine_events"]["handler"]
+
+    result = json.loads(handler({"engine_id": "reliability"}))
+    assert result == {"ok": False, "reason": "integration_not_configured"}
+
+
+
+def test_kie_engine_events_tool_does_not_create_missing_database(tmp_path):
+    database = tmp_path / "missing" / "kie.sqlite3"
+    ctx = FakeHermesContext({"kie_database": str(database)})
+    register(ctx)
+    handler = ctx.tools["kie_engine_events"]["handler"]
+
+    result = json.loads(handler({"engine_id": "reliability"}))
+
+    assert result == {"ok": False, "reason": "kie_database_unavailable"}
+    assert not database.exists()

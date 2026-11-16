@@ -5,10 +5,13 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
+import threading
 from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 from .adapters.evidence import EvidenceReadOnlyAdapter
+from .transports.engine_event_socket import EngineEventSocketServer
 from .events import HERMES_HOST_ID, EpistemicStatus, IntegrationEvent, Sensitivity, event_to_dict
 from .event_store import SQLiteEventStore
 from .executor import AdapterRegistry, ExecutionPolicy, WorkflowExecutor
@@ -16,8 +19,41 @@ from .transports.evidence_stdio import EvidenceStdioConfig, EvidenceStdioTranspo
 from .workflow_store import SQLiteWorkflowStore, StepStatus
 from .workflows import WorkflowDefinition, WorkflowStep, plan_workflow
 
-_PLUGIN_VERSION = "0.7.0"
+_PLUGIN_VERSION = "0.8.0"
 _WORKFLOW_ID = "hermes_evidence_lookup"
+_ENGINE_EVENT_TOOL = "kie_engine_events"
+_ENGINE_EVENT_ENGINES = frozenset({"critical_thinking", "reliability", "emotion"})
+_ENGINE_EVENT_SERVERS: dict[tuple[str, str], EngineEventSocketServer] = {}
+_ENGINE_EVENT_SERVERS_LOCK = threading.RLock()
+_LOGGER = logging.getLogger("kie.hermes_plugin")
+
+
+def _start_engine_event_ingress(ctx) -> EngineEventSocketServer | None:
+    """Start the optional same-user Unix-socket receiver when configured."""
+    socket_value = ctx.get_config("engine_event_socket", default=None)
+    database_value = ctx.get_config("kie_database", default=None)
+    if not isinstance(socket_value, str) or not socket_value.strip():
+        return None
+    if not isinstance(database_value, str) or not database_value.strip():
+        _LOGGER.warning("KIE engine event ingress is disabled: kie_database is not configured")
+        return None
+    socket_path = Path(socket_value).expanduser()
+    database_path = Path(database_value).expanduser()
+    if not socket_path.is_absolute() or not database_path.is_absolute():
+        _LOGGER.warning("KIE engine event ingress is disabled: paths must be absolute")
+        return None
+    key = (str(socket_path), str(database_path))
+    with _ENGINE_EVENT_SERVERS_LOCK:
+        server = _ENGINE_EVENT_SERVERS.get(key)
+        if server is None:
+            server = EngineEventSocketServer(socket_path, database_path)
+            _ENGINE_EVENT_SERVERS[key] = server
+        try:
+            server.start()
+        except (OSError, TypeError, ValueError):
+            _LOGGER.exception("KIE engine event ingress could not start")
+            return None
+        return server
 _TOOL_NAME = "kie_evidence_lookup"
 
 
@@ -140,8 +176,94 @@ async def _lookup(
         })
 
 
+
+
+def _recent_engine_events(engine_id: str, limit: int, database_path: Path) -> str:
+    """Return a bounded read-only view of sanitized engine metadata."""
+    with SQLiteEventStore(database_path) as store:
+        records = store.read_recent_events(limit=limit, producer_engine=engine_id)
+    return _json({
+        "ok": True,
+        "engine_id": engine_id,
+        "event_count": len(records),
+        "events": [
+            {
+                "sequence": record.sequence,
+                "event_id": str(record.event.event_id),
+                "event_type": record.event.event_type,
+                "occurred_at": record.event.occurred_at.isoformat(),
+                "sensitivity": record.event.sensitivity.value,
+                "epistemic_status": record.event.epistemic_status.value,
+                "payload": dict(record.event.payload),
+            }
+            for record in records
+        ],
+    })
+
+
+def _register_engine_events_tool(ctx) -> None:
+    """Expose only allowlisted, already-sanitized engine events to Hermes."""
+    schema = {
+        "name": _ENGINE_EVENT_TOOL,
+        "description": (
+            "Read a bounded, read-only view of recent metadata events from one KOR engine. "
+            "Use only when the user asks for engine status or recent engine activity. "
+            "Returns sanitized routing/runtime/reflection metadata, never conversation content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "engine_id": {
+                    "type": "string",
+                    "enum": sorted(_ENGINE_EVENT_ENGINES),
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "default": 5,
+                },
+            },
+            "required": ["engine_id"],
+            "additionalProperties": False,
+        },
+    }
+
+    def handle_events(params, **kwargs):
+        del kwargs
+        if not isinstance(params, Mapping) or set(params) - {"engine_id", "limit"}:
+            return _json({"ok": False, "reason": "invalid_tool_arguments"})
+        engine_id = params.get("engine_id")
+        limit = params.get("limit", 5)
+        if not isinstance(engine_id, str) or engine_id not in _ENGINE_EVENT_ENGINES:
+            return _json({"ok": False, "reason": "invalid_engine_id"})
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+            return _json({"ok": False, "reason": "invalid_limit"})
+        try:
+            database_value = ctx.get_config("kie_database", default=None)
+            if not isinstance(database_value, str) or not database_value.strip():
+                return _json({"ok": False, "reason": "integration_not_configured"})
+            database_path = Path(database_value).expanduser()
+            if not database_path.is_absolute():
+                return _json({"ok": False, "reason": "integration_configuration_invalid"})
+            if not database_path.is_file():
+                return _json({"ok": False, "reason": "kie_database_unavailable"})
+            return _recent_engine_events(engine_id, limit, database_path)
+        except Exception:
+            return _json({"ok": False, "reason": "kie_event_read_failed"})
+
+    ctx.register_tool(
+        name=_ENGINE_EVENT_TOOL,
+        toolset="kor_kie",
+        schema=schema,
+        handler=handle_events,
+    )
+
+
 def register(ctx) -> None:
-    """Register one async read-only tool with Hermes Agent v0.23.1+."""
+    """Register the Evidence tool and optional engine-to-KIE event ingress."""
+    _start_engine_event_ingress(ctx)
+    _register_engine_events_tool(ctx)
     schema = {
         "name": _TOOL_NAME,
         "description": (
