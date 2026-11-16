@@ -33,7 +33,7 @@ _RELIABILITY_KINDS = frozenset({"provider_error", "tool_call_blocked", "response
 _ANOMALIES = frozenset({
     "response_not_text", "empty_response", "response_too_large", "repeated_lines",
 })
-_EMOTION_STATUSES = frozenset({"awaiting_evidence", "completed", "budget_exhausted"})
+_EMOTION_STATUSES = frozenset({"completed", "budget_exhausted"})
 
 
 class EngineEventRejected(ValueError):
