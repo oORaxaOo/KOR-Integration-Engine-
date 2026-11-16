@@ -90,21 +90,34 @@ class HealthSupervisor:
                 ))
         return states, issues
 
-    def _event_ingress_status(self) -> tuple[str, list[dict[str, str]]]:
-        running = getattr(self.event_server, "is_running", False)
-        if callable(running):
+    def _event_ingress_status(self) -> tuple[str, list[dict[str, str]], str]:
+        state = getattr(self.event_server, "status", None)
+        if callable(state):
             try:
-                running = running()
+                state = state()
             except Exception:
-                running = False
-        if running is True:
-            return "ready", []
+                state = "unavailable"
+
+        if state in {"owner", "connected"}:
+            return "ready", [], state
+
+        # Preserve compatibility with older server doubles and plugin versions.
+        if state is None:
+            running = getattr(self.event_server, "is_running", False)
+            if callable(running):
+                try:
+                    running = running()
+                except Exception:
+                    running = False
+            if running is True:
+                return "ready", [], "owner"
+
         return "unavailable", [self._issue(
             "kie-event-ingress",
             "event_socket_not_running",
             "critical",
-            "KIE's local engine-event receiver is not running.",
-        )]
+            "KIE's local engine-event receiver is not running or cannot be reached.",
+        )], "unavailable"
 
     def _evidence_adapter_status(self) -> tuple[dict[str, str], list[dict[str, str]]]:
         details: dict[str, str] = {}
@@ -242,7 +255,7 @@ class HealthSupervisor:
             raise ValueError("health clock must return a timezone-aware datetime")
 
         plugins, issues = self._plugin_status()
-        ingress_status, ingress_issues = self._event_ingress_status()
+        ingress_status, ingress_issues, ingress_role = self._event_ingress_status()
         issues.extend(ingress_issues)
         evidence, evidence_issues = self._evidence_adapter_status()
         issues.extend(evidence_issues)
@@ -254,6 +267,7 @@ class HealthSupervisor:
             "checked_at": now.isoformat(),
             "plugins": plugins,
             "event_ingress": ingress_status,
+            "event_ingress_role": ingress_role,
             "event_store": event_store,
             "evidence_adapter": evidence,
             "active_issue_count": len(issues),
