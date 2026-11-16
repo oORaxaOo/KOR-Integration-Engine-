@@ -1,0 +1,9 @@
+plugins:
+  entries:
+    kor-kie-evidence:
+      settings:
+        evidence_python: /absolute/path/to/hermes/python
+        evidence_source_root: /absolute/path/to/Evidence-Engine
+        evidence_database: /absolute/path/to/evidence.sqlite3
+        kie_database: /absolute/path/to/kie-integration.sqlite3
+        timeout_seconds: 10
