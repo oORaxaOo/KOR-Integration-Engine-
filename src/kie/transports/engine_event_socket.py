@@ -42,6 +42,11 @@ _ANOMALIES = frozenset({
     "response_not_text", "empty_response", "response_too_large", "repeated_lines",
 })
 _EMOTION_STATUSES = frozenset({"completed", "budget_exhausted"})
+_ENGINE_FAILURE_CODES = {
+    "critical_thinking": frozenset({"hook_exception"}),
+    "emotion": frozenset({"reflection_handler_error"}),
+    "evidence": frozenset({"configuration_missing", "policy_invalid", "verification_exception"}),
+}
 
 
 class EngineEventRejected(ValueError):
@@ -62,6 +67,27 @@ def _exact_keys(payload: Any, required: set[str]) -> Mapping[str, Any]:
 
 
 def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[dict[str, Any], Sensitivity, tuple[str, ...]]:
+    if engine_id in _ENGINE_FAILURE_CODES and event_type == f"{engine_id}.hook_failure":
+        data = _exact_keys(payload, {"failure_code"})
+        code = data["failure_code"]
+        if not isinstance(code, str) or code not in _ENGINE_FAILURE_CODES[engine_id]:
+            raise EngineEventRejected("failure_code is not allowlisted")
+        return {"failure_code": code}, Sensitivity.INTERNAL, ("reliability",)
+
+    if engine_id == "emotion" and event_type == "emotion.reflection_failed":
+        data = _exact_keys(payload, {"failure_code"})
+        code = data["failure_code"]
+        if not isinstance(code, str) or code != "reflection_handler_error":
+            raise EngineEventRejected("failure_code is not allowlisted")
+        return {"failure_code": code}, Sensitivity.INTERNAL, ("reliability",)
+
+    if engine_id == "evidence" and event_type == "evidence.verification_unavailable":
+        data = _exact_keys(payload, {"failure_code"})
+        code = data["failure_code"]
+        if not isinstance(code, str) or code not in _ENGINE_FAILURE_CODES["evidence"]:
+            raise EngineEventRejected("failure_code is not allowlisted")
+        return {"failure_code": code}, Sensitivity.INTERNAL, ("reliability",)
+
     if engine_id == "critical_thinking" and event_type == "critical_thinking.review_routed":
         data = _exact_keys(payload, {"intent", "review_level", "user_requested", "signals"})
         if not isinstance(data["intent"], str) or data["intent"] not in _INTENTS:
@@ -156,7 +182,7 @@ def _event_from_message(message: Any) -> IntegrationEvent:
         raise EngineEventRejected("event_id must use canonical UUID format")
     engine_id = message["engine_id"]
     event_type = message["event_type"]
-    if not isinstance(engine_id, str) or engine_id not in {"critical_thinking", "reliability", "emotion"}:
+    if not isinstance(engine_id, str) or engine_id not in {"critical_thinking", "reliability", "emotion", "evidence"}:
         raise EngineEventRejected("unknown engine identity")
     if not isinstance(event_type, str):
         raise EngineEventRejected("event_type must be a string")
