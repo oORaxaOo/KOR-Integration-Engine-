@@ -5,10 +5,13 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
+import threading
 from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 from .adapters.evidence import EvidenceReadOnlyAdapter
+from .transports.engine_event_socket import EngineEventSocketServer
 from .events import HERMES_HOST_ID, EpistemicStatus, IntegrationEvent, Sensitivity, event_to_dict
 from .event_store import SQLiteEventStore
 from .executor import AdapterRegistry, ExecutionPolicy, WorkflowExecutor
@@ -16,8 +19,39 @@ from .transports.evidence_stdio import EvidenceStdioConfig, EvidenceStdioTranspo
 from .workflow_store import SQLiteWorkflowStore, StepStatus
 from .workflows import WorkflowDefinition, WorkflowStep, plan_workflow
 
-_PLUGIN_VERSION = "0.7.0"
+_PLUGIN_VERSION = "0.8.0"
 _WORKFLOW_ID = "hermes_evidence_lookup"
+_ENGINE_EVENT_SERVERS: dict[tuple[str, str], EngineEventSocketServer] = {}
+_ENGINE_EVENT_SERVERS_LOCK = threading.RLock()
+_LOGGER = logging.getLogger("kie.hermes_plugin")
+
+
+def _start_engine_event_ingress(ctx) -> EngineEventSocketServer | None:
+    """Start the optional same-user Unix-socket receiver when configured."""
+    socket_value = ctx.get_config("engine_event_socket", default=None)
+    database_value = ctx.get_config("kie_database", default=None)
+    if not isinstance(socket_value, str) or not socket_value.strip():
+        return None
+    if not isinstance(database_value, str) or not database_value.strip():
+        _LOGGER.warning("KIE engine event ingress is disabled: kie_database is not configured")
+        return None
+    socket_path = Path(socket_value).expanduser()
+    database_path = Path(database_value).expanduser()
+    if not socket_path.is_absolute() or not database_path.is_absolute():
+        _LOGGER.warning("KIE engine event ingress is disabled: paths must be absolute")
+        return None
+    key = (str(socket_path), str(database_path))
+    with _ENGINE_EVENT_SERVERS_LOCK:
+        server = _ENGINE_EVENT_SERVERS.get(key)
+        if server is None:
+            server = EngineEventSocketServer(socket_path, database_path)
+            _ENGINE_EVENT_SERVERS[key] = server
+        try:
+            server.start()
+        except (OSError, TypeError, ValueError):
+            _LOGGER.exception("KIE engine event ingress could not start")
+            return None
+        return server
 _TOOL_NAME = "kie_evidence_lookup"
 
 
@@ -141,7 +175,8 @@ async def _lookup(
 
 
 def register(ctx) -> None:
-    """Register one async read-only tool with Hermes Agent v0.23.1+."""
+    """Register the Evidence tool and optional engine-to-KIE event ingress."""
+    _start_engine_event_ingress(ctx)
     schema = {
         "name": _TOOL_NAME,
         "description": (
