@@ -84,7 +84,7 @@ def test_hermes_tool_runs_evidence_adapter_through_kie_and_persists_events(tmp_p
     })
     register(ctx)
     handler = ctx.tools["kie_evidence_lookup"]["handler"]
-    result = json.loads(asyncio.run(handler({"evidence_task_id": task_id}))
+    result = json.loads(asyncio.run(handler({"evidence_task_id": task_id})))
 
     assert result["ok"] is True
     assert result["step_status"] == "completed"

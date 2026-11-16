@@ -82,3 +82,13 @@ def test_expiry():
     event = make_event(expires_at=NOW + timedelta(minutes=1))
     assert not event.is_expired(NOW)
     assert event.is_expired(NOW + timedelta(minutes=1))
+
+def test_hermes_host_can_produce_events_for_engine_consumers():
+    from kie.events import HERMES_HOST_ID
+    event = make_event(
+        producer_engine=HERMES_HOST_ID,
+        allowed_consumers=("evidence",),
+        event_type="evidence.lookup_request",
+    )
+    assert event.producer_engine == "hermes_host"
+    assert event.allowed_consumers == ("evidence",)
