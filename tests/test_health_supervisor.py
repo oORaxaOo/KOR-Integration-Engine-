@@ -42,7 +42,7 @@ def _make_supervisor(tmp_path, *, loaded=None, event_server=None, now=None):
         evidence_python=Path(sys.executable),
         evidence_source_root=root,
         evidence_database=tmp_path / "evidence.sqlite3",
-        now=now,
+        now=(lambda: now) if now is not None else None,
     ), database
 
 
