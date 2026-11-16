@@ -249,3 +249,19 @@ def test_recent_evidence_policy_failure_is_reported_without_policy_details(tmp_p
     assert issue["severity"] == "warning"
     assert "policy_invalid" not in issue["summary"]
     assert "path" not in issue["summary"].lower()
+
+
+
+def test_inspection_failure_alert_is_deduplicated(tmp_path):
+    supervisor, _ = _make_supervisor(tmp_path)
+
+    def broken_report():
+        raise OSError("private database path")
+
+    supervisor.get_report = broken_report
+
+    first = supervisor.on_pre_llm_call()
+    repeated = supervisor.on_pre_llm_call()
+
+    assert first and "could not complete its health inspection" in first["context"]
+    assert repeated is None
