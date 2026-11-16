@@ -105,3 +105,35 @@ def test_transport_requires_existing_operator_paths(tmp_path):
             evidence_source_root=source,
             database_path=tmp_path / "missing.sqlite3",
         )
+
+
+def test_transport_forwards_only_required_runtime_loader_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/test/python/lib")
+    monkeypatch.setenv("KOR_TEST_SECRET", "do-not-forward")
+    bridge = """
+import json
+import os
+import sys
+sys.stdin.readline()
+print(json.dumps({
+    "jsonrpc": "2.0",
+    "id": "env-check",
+    "result": {
+        "loader": os.environ.get("LD_LIBRARY_PATH"),
+        "secret": os.environ.get("KOR_TEST_SECRET"),
+        "pythonpath": os.environ.get("PYTHONPATH"),
+        "no_user_site": os.environ.get("PYTHONNOUSERSITE"),
+    },
+}), flush=True)
+"""
+    transport = make_transport(tmp_path, bridge)
+    result = asyncio.run(transport.call(
+        "get_task_report",
+        {"task_id": str(uuid4()), "evidence_limit": 10, "evidence_offset": 0},
+        request_id="env-check",
+    ))
+
+    assert result["result"]["loader"] == "/test/python/lib"
+    assert result["result"]["secret"] is None
+    assert result["result"]["no_user_site"] == "1"
+    assert result["result"]["pythonpath"].endswith("/src")

@@ -30,9 +30,12 @@ only `get_task_report`, enforces a timeout and response-size bound, discards
 stderr, and terminates a timed-out child. The Evidence Engine opens its
 database through its existing read-only `EvidenceReader`.
 
-The subprocess receives a minimal environment containing only `PYTHONPATH`,
-`PYTHONNOUSERSITE`, and `PYTHONUNBUFFERED`. Hermes credentials and the
-user's general environment are not forwarded.
+The subprocess receives a minimal environment containing `PYTHONPATH`,
+`PYTHONNOUSERSITE`, and `PYTHONUNBUFFERED`, plus only the dynamic-loader
+variables `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` or Windows `SYSTEMROOT` when
+present. Some Python distributions require these to locate their own runtime
+libraries. Hermes credentials and the user's general environment are not
+forwarded.
 
 ## Installation
 

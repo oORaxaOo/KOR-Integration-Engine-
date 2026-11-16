@@ -146,11 +146,17 @@ class EvidenceStdioTransport:
         if len(request_line) > _MAX_REQUEST_BYTES:
             raise ValueError("Evidence request exceeds the maximum size")
 
+        # Preserve only dynamic-loader variables required by some Python distributions.
+        # Hermes credentials and the rest of the user's environment are intentionally excluded.
         environment = {
             "PYTHONPATH": str(self.config.evidence_source_root / "src"),
             "PYTHONNOUSERSITE": "1",
             "PYTHONUNBUFFERED": "1",
         }
+        for name in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "SYSTEMROOT"):
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
         process: asyncio.subprocess.Process | None = None
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
