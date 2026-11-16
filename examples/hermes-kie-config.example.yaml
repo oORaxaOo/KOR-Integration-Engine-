@@ -7,3 +7,4 @@ plugins:
         evidence_database: /absolute/path/to/evidence.sqlite3
         kie_database: /absolute/path/to/kie-integration.sqlite3
         timeout_seconds: 10
+        engine_event_socket: /home/USER/.hermes/run/kie-engine-events.sock
