@@ -149,7 +149,7 @@ def test_hermes_tool_fails_closed_when_settings_are_missing():
     handler = ctx.tools["kie_evidence_lookup"]["handler"]
     result = json.loads(asyncio.run(handler({"evidence_task_id": str(uuid4())})))
     assert result["ok"] is False
-    assert result["reason"] == "integration_not_configured"
+    assert result["reason"] == "integration_configuration_invalid"
 
 
 
@@ -252,7 +252,7 @@ def test_kie_engine_events_tool_fails_closed_without_kie_database():
     handler = ctx.tools["kie_engine_events"]["handler"]
 
     result = json.loads(handler({"engine_id": "reliability"}))
-    assert result == {"ok": False, "reason": "integration_not_configured"}
+    assert result == {"ok": False, "reason": "kie_database_unavailable"}
 
 
 
