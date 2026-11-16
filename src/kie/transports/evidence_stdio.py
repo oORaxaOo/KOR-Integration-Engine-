@@ -203,7 +203,11 @@ class EvidenceStdioTransport:
             if process is not None:
                 await self._stop_process(process)
             raise
-        except (OSError, ValueError, asyncio.LimitOverrunError) as exc:
+        except (ValueError, asyncio.LimitOverrunError) as exc:
+            if process is not None:
+                await self._stop_process(process)
+            raise EvidenceTransportError("Evidence bridge response exceeded the byte limit") from exc
+        except OSError as exc:
             if process is not None:
                 await self._stop_process(process)
             raise EvidenceTransportError("Evidence bridge could not be started or read") from exc
