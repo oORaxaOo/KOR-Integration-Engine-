@@ -33,13 +33,17 @@ _LOGGER = logging.getLogger("kie.hermes_plugin")
 
 def _start_engine_event_ingress(ctx) -> EngineEventSocketServer | None:
     """Start the optional same-user Unix-socket receiver when configured."""
-    socket_value = ctx.get_config("engine_event_socket", default=None)
-    database_value = ctx.get_config("kie_database", default=None)
+    home = _hermes_home()
+    socket_value = ctx.get_config(
+        "engine_event_socket", default=str(home / "run" / "kie-engine-events.sock")
+    )
+    database_value = ctx.get_config(
+        "kie_database", default=str(home / "kie" / "kie.sqlite3")
+    )
     if not isinstance(socket_value, str) or not socket_value.strip():
-        return None
+        socket_value = str(home / "run" / "kie-engine-events.sock")
     if not isinstance(database_value, str) or not database_value.strip():
-        _LOGGER.warning("KIE engine event ingress is disabled: kie_database is not configured")
-        return None
+        database_value = str(home / "kie" / "kie.sqlite3")
     socket_path = Path(socket_value).expanduser()
     database_path = Path(database_value).expanduser()
     if not socket_path.is_absolute() or not database_path.is_absolute():
@@ -101,7 +105,7 @@ def _read_settings(ctx) -> tuple[EvidenceStdioConfig, Path, int]:
     def configured(key: str, default: str) -> str:
         value = ctx.get_config(key, default=default)
         if not isinstance(value, str) or not value.strip():
-            raise LookupError("required integration setting is missing")
+            return default
         return value
 
     python_executable = configured("evidence_python", sys.executable)
@@ -282,9 +286,10 @@ def _register_engine_events_tool(ctx) -> None:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
             return _json({"ok": False, "reason": "invalid_limit"})
         try:
-            database_value = ctx.get_config("kie_database", default=None)
+            default_database = _hermes_home() / "kie" / "kie.sqlite3"
+            database_value = ctx.get_config("kie_database", default=str(default_database))
             if not isinstance(database_value, str) or not database_value.strip():
-                return _json({"ok": False, "reason": "integration_not_configured"})
+                database_value = str(default_database)
             database_path = Path(database_value).expanduser()
             if not database_path.is_absolute():
                 return _json({"ok": False, "reason": "integration_configuration_invalid"})
