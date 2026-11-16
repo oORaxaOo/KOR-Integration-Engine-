@@ -357,5 +357,6 @@ class EvidenceReadOnlyAdapter:
             task_id=str(request.run_id),
             correlation_id=str(request.run_id),
             idempotency_key=request.idempotency_key,
+            verification=event_verification,
         )
         return ExecutionResult(outcome=ExecutionOutcome.COMPLETED, event=event)

@@ -47,3 +47,7 @@ __all__ += [
     "ExecutionRequest", "ExecutionResult", "ExecutorError",
     "InvalidEngineResult", "WorkflowExecutor",
 ]
+
+from .adapters import EvidenceReadOnlyAdapter, EvidenceRpcTransport
+
+__all__ += ["EvidenceReadOnlyAdapter", "EvidenceRpcTransport"]

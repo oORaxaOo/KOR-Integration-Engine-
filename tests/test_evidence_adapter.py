@@ -228,6 +228,24 @@ def test_mismatched_json_rpc_id_is_rejected():
     assert result.reason == "evidence_rpc_invalid_response"
 
 
+
+def test_current_contradicted_snapshot_becomes_scoped_refuted_event():
+    request = make_request()
+    task_id = request.input_events[0].event.payload["evidence_task_id"]
+    report = supported_report(task_id)
+    report["task"]["status"] = "failed"
+    report["effective_status"] = "failed"
+    report["verification"]["status"] = "contradicted"
+    transport = FakeTransport(rpc_result(report, request))
+
+    result = asyncio.run(EvidenceReadOnlyAdapter(transport).execute(request))
+
+    assert result.outcome is ExecutionOutcome.COMPLETED
+    assert result.event.epistemic_status is EpistemicStatus.REFUTED
+    assert result.event.verification is not None
+    assert result.event.verification.scope == f"evidence_task:{task_id}"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
