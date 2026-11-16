@@ -195,3 +195,21 @@ def test_event_contract_rejects_unknown_engine_failure_code():
     )
     with pytest.raises(EngineEventRejected):
         _event_from_message(message)
+
+
+
+def test_server_reports_running_state_and_uses_private_parent_directories(tmp_path):
+    database = tmp_path / "private-db" / "kie.sqlite3"
+    socket_path = tmp_path / "private-run" / "kie.sock"
+    server = EngineEventSocketServer(socket_path, database)
+
+    assert server.is_running is False
+    server.start()
+    try:
+        assert server.is_running is True
+        assert stat.S_IMODE(socket_path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(database.parent.stat().st_mode) == 0o700
+    finally:
+        server.shutdown()
+
+    assert server.is_running is False
