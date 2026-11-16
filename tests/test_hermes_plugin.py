@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from kie import EpistemicStatus, SQLiteEventStore
-from kie.hermes_plugin import register
+from kie.hermes_plugin import _start_engine_event_ingress, register
 
 
 def make_bridge_source(task_id: str) -> str:
@@ -129,3 +129,20 @@ def test_hermes_tool_fails_closed_when_settings_are_missing():
     result = json.loads(asyncio.run(handler({"evidence_task_id": str(uuid4())})))
     assert result["ok"] is False
     assert result["reason"] == "integration_not_configured"
+
+
+
+def test_register_starts_optional_engine_event_ingress(tmp_path):
+    socket_path = tmp_path / "run" / "kie-events.sock"
+    database = tmp_path / "kie.sqlite3"
+    ctx = FakeHermesContext({
+        "engine_event_socket": str(socket_path),
+        "kie_database": str(database),
+    })
+
+    register(ctx)
+    server = _start_engine_event_ingress(ctx)
+
+    assert server is not None
+    assert socket_path.is_socket()
+    server.shutdown()
