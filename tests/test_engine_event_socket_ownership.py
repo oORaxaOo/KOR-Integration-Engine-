@@ -1,3 +1,4 @@
+import multiprocessing
 import sys
 
 from kie.health import HealthSupervisor
@@ -7,6 +8,17 @@ from kie.transports.engine_event_socket import EngineEventSocketServer
 class _PluginContext:
     def has_plugin(self, plugin_id: str) -> bool:
         return True
+
+
+def _hold_ingress_in_child(socket_path: str, database_path: str, ready, stop) -> None:
+    server = EngineEventSocketServer(socket_path, database_path)
+    try:
+        server.start()
+        ready.set()
+        stop.wait(10)
+    finally:
+        server.shutdown()
+
 
 
 def test_second_server_observes_existing_owner_without_taking_or_removing_socket(tmp_path):
@@ -28,6 +40,36 @@ def test_second_server_observes_existing_owner_without_taking_or_removing_socket
 
     assert not socket_path.exists()
 
+
+
+def test_ingress_is_shared_between_separate_processes(tmp_path):
+    socket_path = tmp_path / "run" / "kie-events.sock"
+    database = tmp_path / "kie.sqlite3"
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    stop = context.Event()
+    process = context.Process(
+        target=_hold_ingress_in_child,
+        args=(str(socket_path), str(database), ready, stop),
+    )
+    process.start()
+    observer = EngineEventSocketServer(socket_path, database)
+
+    try:
+        assert ready.wait(5), "child process did not start the event ingress"
+        observer.start()
+        assert observer.status == "connected"
+        observer.shutdown()
+        assert socket_path.is_socket()
+    finally:
+        stop.set()
+        process.join(5)
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+
+    assert process.exitcode == 0
+    assert not socket_path.exists()
 
 def test_health_probe_does_not_create_an_event_or_initialize_the_database(tmp_path):
     socket_path = tmp_path / "run" / "kie-events.sock"
