@@ -1,6 +1,7 @@
 name: kor-kie-evidence
-version: "0.7.0"
+version: "0.8.0"
 description: Read-only Evidence Engine snapshots through the KOR Integration Engine
 requires_hermes: ">=0.23.1"
 provides_tools:
   - kie_evidence_lookup
+  - kie_engine_events
