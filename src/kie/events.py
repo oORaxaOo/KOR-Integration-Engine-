@@ -17,6 +17,8 @@ from typing import Any
 from uuid import UUID
 
 ENGINE_IDS = frozenset({"critical_thinking", "reliability", "evidence", "emotion"})
+HERMES_HOST_ID = "hermes_host"
+PRODUCER_IDS = ENGINE_IDS | {HERMES_HOST_ID}
 _EVENT_TYPE = re.compile(r"^[a-z][a-z0-9_.-]{1,95}$")
 _MAX_PAYLOAD_BYTES = 64 * 1024
 
@@ -140,8 +142,8 @@ class IntegrationEvent:
             raise ValueError("unsupported schema_version")
         if not isinstance(self.event_type, str) or not _EVENT_TYPE.fullmatch(self.event_type):
             raise ValueError("event_type must be a lowercase identifier (2-96 characters)")
-        if self.producer_engine not in ENGINE_IDS:
-            raise ValueError("producer_engine is not a registered engine")
+        if self.producer_engine not in PRODUCER_IDS:
+            raise ValueError("producer_engine is not a registered engine or host producer")
         if not isinstance(self.producer_version, str) or not self.producer_version.strip():
             raise ValueError("producer_version must be non-empty")
         _aware_datetime(self.occurred_at, "occurred_at")

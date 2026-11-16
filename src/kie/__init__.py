@@ -1,7 +1,7 @@
 """KOR Integration Engine: deterministic coordination primitives."""
 
 from .events import (
-    ENGINE_IDS, EpistemicStatus, IntegrationEvent, Sensitivity, Verification,
+    ENGINE_IDS, HERMES_HOST_ID, PRODUCER_IDS, EpistemicStatus, IntegrationEvent, Sensitivity, Verification,
     event_from_dict, event_to_dict,
 )
 from .routing import RouteDecision, route_event
@@ -21,7 +21,7 @@ from .workflow_store import (
 )
 
 __all__ = [
-    "ENGINE_IDS", "EpistemicStatus", "IntegrationEvent", "Sensitivity",
+    "ENGINE_IDS", "HERMES_HOST_ID", "PRODUCER_IDS", "EpistemicStatus", "IntegrationEvent", "Sensitivity",
     "Verification", "event_from_dict", "event_to_dict", "RouteDecision",
     "route_event", "PlannedStep", "StepPlanStatus", "WorkflowDefinition",
     "WorkflowPlan", "WorkflowStep", "plan_workflow", "AppendResult",
@@ -47,3 +47,7 @@ __all__ += [
     "ExecutionRequest", "ExecutionResult", "ExecutorError",
     "InvalidEngineResult", "WorkflowExecutor",
 ]
+
+from .adapters import EvidenceReadOnlyAdapter, EvidenceRpcTransport
+
+__all__ += ["EvidenceReadOnlyAdapter", "EvidenceRpcTransport"]
