@@ -15,23 +15,32 @@ independent engines. It does not replace their internal logic or databases.
   are registered by the host, not discovered dynamically.
 - **Engine adapters:** narrow boundaries that translate one engine's output
   into a KIE event. The first adapter is the read-only Evidence snapshot
-  adapter; it calls only `get_task_report` over a host-injected transport.
+  adapter.
+- **Hermes host plugin:** an opt-in native plugin that exposes one asynchronous
+  Evidence lookup tool, runs the one-step KIE workflow, and stores request and
+  result events in the KIE database.
 
 ## Ownership boundaries
 
-Each engine remains the owner of its internal state and persistence. The KIE
-stores integration events and workflow state; it does not take ownership of
-engine databases. An adapter may use only the public interface it was written
-against. The host retains process lifecycle, credentials, operating-system
-permissions, and execution-policy configuration.
+Each domain engine remains the owner of its internal state and persistence.
+The KIE stores integration events and workflow state; it does not take
+ownership of engine databases. An adapter may use only the public interface it
+was written against. The host retains process lifecycle, credentials,
+operating-system permissions, and execution-policy configuration.
+
+Hermes is the runtime host, not a fifth domain engine. The event protocol has
+one reserved host producer identity (`hermes_host`) for requests created by
+trusted host-side plugin code. Event consumers remain restricted to the four
+domain engines.
 
 ## Current integration status
 
-The Evidence adapter is implemented as a library component and covered by
-tests. It is not yet registered in Hermes, does not launch the Evidence JSON-RPC
-bridge, and does not change WhatsApp or gateway configuration. A host must
-explicitly supply a bounded transport, register the adapter, and authorize an
-appropriate workflow. Other engines remain unconnected.
+The Evidence adapter, bounded stdio transport, and native Hermes plugin are
+implemented as library/plugin components and covered by tests. They are not
+installed or enabled on a user's machine by repository changes alone. The
+operator must install the KIE package into Hermes' Python environment, copy
+and enable the plugin, configure absolute local paths, and enable its toolset.
+Other engines remain unconnected.
 
 ## Trust limits
 

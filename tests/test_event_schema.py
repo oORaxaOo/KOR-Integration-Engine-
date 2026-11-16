@@ -22,3 +22,9 @@ def test_event_schema_is_valid_json_and_matches_exported_envelope():
     assert set(schema["properties"]) == set(exported)
     assert schema["properties"]["schema_version"]["const"] == event.schema_version
     assert schema["properties"]["producer_engine"]["enum"]
+
+def test_event_schema_includes_trusted_hermes_host_as_producer():
+    from kie.events import HERMES_HOST_ID
+    schema_path = Path(__file__).parents[1] / "schemas" / "integration-event-v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert HERMES_HOST_ID in schema["properties"]["producer_engine"]["enum"]
