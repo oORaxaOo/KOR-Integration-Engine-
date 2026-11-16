@@ -220,3 +220,32 @@ def test_critical_reliability_snapshot_creates_critical_health_issue(tmp_path):
     assert codes["reliability_context_pressure_critical"] == "critical"
     assert codes["reliability_api_errors"] == "warning"
     assert codes["reliability_response_anomalies"] == "warning"
+
+
+
+def test_recent_evidence_policy_failure_is_reported_without_policy_details(tmp_path):
+    now = datetime.now(timezone.utc)
+    supervisor, database = _make_supervisor(tmp_path, now=now)
+    event = IntegrationEvent(
+        event_id=uuid4(),
+        schema_version=1,
+        event_type="evidence.verification_unavailable",
+        producer_engine="evidence",
+        producer_version="0.2.0",
+        occurred_at=now,
+        recorded_at=now,
+        epistemic_status=EpistemicStatus.OBSERVED,
+        sensitivity=Sensitivity.INTERNAL,
+        allowed_consumers=("reliability",),
+        payload={"failure_code": "policy_invalid"},
+    )
+    with SQLiteEventStore(database) as store:
+        store.append(event)
+
+    report = supervisor.get_report()
+    issue = next(item for item in report["issues"] if item["code"] == "evidence_verification_unavailable")
+
+    assert report["status"] == "degraded"
+    assert issue["severity"] == "warning"
+    assert "policy_invalid" not in issue["summary"]
+    assert "path" not in issue["summary"].lower()
