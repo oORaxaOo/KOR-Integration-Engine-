@@ -1,4 +1,4 @@
-"""Native Hermes tool registration for the KIE Evidence snapshot workflow."""
+"""Native Hermes tools for KIE's bounded engine event ledger."""
 from __future__ import annotations
 
 import json
@@ -16,13 +16,29 @@ from .transports.evidence_stdio import EvidenceStdioConfig, EvidenceStdioTranspo
 from .workflow_store import SQLiteWorkflowStore, StepStatus
 from .workflows import WorkflowDefinition, WorkflowStep, plan_workflow
 
-_PLUGIN_VERSION = "0.7.0"
+_PLUGIN_VERSION = "0.8.0"
 _WORKFLOW_ID = "hermes_evidence_lookup"
 _TOOL_NAME = "kie_evidence_lookup"
+_STATUS_TOOL_NAME = "kie_engine_status"
+_ENGINE_EVENT_TYPES = {
+    "critical_thinking": "critical_thinking.review_result",
+    "reliability": "reliability.runtime_snapshot",
+    "emotion": "emotion.reflection_summary",
+}
 
 
 def _json(data: Mapping[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _read_kie_database(ctx) -> Path:
+    value = ctx.get_config("kie_database", default=None)
+    if not isinstance(value, str) or not value.strip():
+        raise LookupError("KIE database setting is missing")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError("kie_database must be an absolute path")
+    return path
 
 
 def _read_settings(ctx) -> tuple[EvidenceStdioConfig, Path, int]:
@@ -35,10 +51,7 @@ def _read_settings(ctx) -> tuple[EvidenceStdioConfig, Path, int]:
     python_executable = required("evidence_python")
     evidence_source_root = required("evidence_source_root")
     evidence_database = required("evidence_database")
-    kie_database_value = required("kie_database")
-    kie_database = Path(kie_database_value).expanduser()
-    if not kie_database.is_absolute():
-        raise ValueError("kie_database must be an absolute path")
+    kie_database = _read_kie_database(ctx)
 
     timeout_value = ctx.get_config("timeout_seconds", default=10)
     if (
@@ -140,8 +153,71 @@ async def _lookup(
         })
 
 
+def _safe_engine_summary(engine_id: str, event) -> dict[str, Any]:
+    payload = event.payload
+    if engine_id == "critical_thinking":
+        return {
+            "intent": payload["intent"],
+            "review_level": payload["review_level"],
+            "reason_code": payload["reason_code"],
+            "context_injected": payload["context_injected"],
+        }
+    if engine_id == "reliability":
+        return {
+            "api_requests": payload["api_requests"],
+            "api_errors": payload["api_errors"],
+            "tool_calls": payload["tool_calls"],
+            "tool_blocks": payload["tool_blocks"],
+            "model_turns": payload["model_turns"],
+            "context_pressure": payload["context_pressure"],
+            "response_anomalies": dict(payload["response_anomalies"]),
+        }
+    return {
+        "status": payload["status"],
+        "step_count": payload["step_count"],
+        "steps_remaining": payload["steps_remaining"],
+        "assessments": list(payload["assessments"]),
+        "hypothesis_count": payload["hypothesis_count"],
+        "next_question_available": payload["next_question_available"],
+        "narrative_storage": False,
+        "persistent_emotional_memory": False,
+    }
+
+
+def _engine_status(database: Path, engine_id: str | None) -> str:
+    selected = (engine_id,) if engine_id is not None else tuple(_ENGINE_EVENT_TYPES)
+    with SQLiteEventStore(database) as store:
+        # Inspect only the most recent global page; never scan an unbounded ledger.
+        after_sequence = max(0, store.count() - 1000)
+        response: dict[str, Any] = {"ok": True, "engines": {}}
+        for current in selected:
+            records = store.read_events(
+                after_sequence=after_sequence,
+                limit=1000,
+                producer_engine=current,
+                event_type=_ENGINE_EVENT_TYPES[current],
+            )
+            if not records:
+                response["engines"][current] = {"status": "no_published_event"}
+                continue
+            latest = records[-1]
+            try:
+                summary = _safe_engine_summary(current, latest.event)
+            except (KeyError, TypeError):
+                response["engines"][current] = {"status": "invalid_event_contract"}
+                continue
+            response["engines"][current] = {
+                "status": "available",
+                "sequence": latest.sequence,
+                "recorded_at": latest.event.recorded_at.isoformat(),
+                "epistemic_status": latest.event.epistemic_status.value,
+                "summary": summary,
+            }
+    return _json(response)
+
+
 def register(ctx) -> None:
-    """Register one async read-only tool with Hermes Agent v0.23.1+."""
+    """Register opt-in evidence lookup and read-only engine status tools."""
     schema = {
         "name": _TOOL_NAME,
         "description": (
@@ -189,10 +265,62 @@ def register(ctx) -> None:
             # Keep local paths, SQL details, and subprocess diagnostics out of model-visible output.
             return _json({"ok": False, "reason": "kie_execution_failed"})
 
+    status_schema = {
+        "name": _STATUS_TOOL_NAME,
+        "description": (
+            "Read the latest privacy-minimized event published by the Critical Thinking, "
+            "Reliability, and Emotion engines. This does not trigger engine work or expose "
+            "conversation text, tool arguments, reflection narratives, or emotional memories."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "engine_id": {
+                    "type": "string",
+                    "enum": ["critical_thinking", "reliability", "emotion"],
+                }
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    }
+
+    def handle_status(params, **kwargs):
+        del kwargs
+        if not isinstance(params, Mapping):
+            return _json({"ok": False, "reason": "invalid_tool_arguments"})
+        engine_id = params.get("engine_id")
+        if engine_id is not None and engine_id not in _ENGINE_EVENT_TYPES:
+            return _json({"ok": False, "reason": "invalid_engine_id"})
+        try:
+            database = _read_kie_database(ctx)
+        except LookupError:
+            return _json({"ok": False, "reason": "integration_not_configured"})
+        except (OSError, TypeError, ValueError):
+            return _json({"ok": False, "reason": "integration_configuration_invalid"})
+        if not database.exists():
+            return _json({
+                "ok": True,
+                "engines": {
+                    key: {"status": "no_published_event"}
+                    for key in ((engine_id,) if engine_id else _ENGINE_EVENT_TYPES)
+                },
+            })
+        try:
+            return _engine_status(database, engine_id)
+        except Exception:
+            return _json({"ok": False, "reason": "kie_status_unavailable"})
+
     ctx.register_tool(
         name=_TOOL_NAME,
         toolset="kor_kie",
         schema=schema,
         handler=handle_lookup,
         is_async=True,
+    )
+    ctx.register_tool(
+        name=_STATUS_TOOL_NAME,
+        toolset="kor_kie",
+        schema=status_schema,
+        handler=handle_status,
     )

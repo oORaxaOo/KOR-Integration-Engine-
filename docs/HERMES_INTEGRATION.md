@@ -42,4 +42,9 @@ narratives, or emotional-memory contents through these contracts.
 
 The Hermes plugin exposes `kie_engine_status`, a read-only view of the latest
 published summary for each of the three engines. It does not execute a new
-review, trigger a reflection, or change engine state.
+review, trigger a reflection, or change engine state. It returns only a
+bounded allowlist of fields from known event types and does not expose the
+full event payload.
+
+The Evidence adapter remains separately accessible through
+`kie_evidence_lookup`.

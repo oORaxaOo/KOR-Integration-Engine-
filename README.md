@@ -13,10 +13,13 @@ and controlled step execution without requiring an LLM.
 - v0.7: bounded stdio transport and an opt-in Hermes Agent plugin that runs
   the Evidence adapter through a one-step KIE workflow.
 - v0.8: optional, bounded engine-event publisher contracts for Critical
-  Thinking, Reliability, and Emotion. These let each live engine publish
-  minimized result metadata into the KIE event ledger without transferring
-  conversation text, tool arguments, reflection narratives, or emotional
-  memories. Engine-side publisher wiring is a separate opt-in change.
+  Thinking, Reliability, and Emotion, plus the read-only
+  `kie_engine_status` Hermes tool.
+
+The three engine publishers accept only minimized result metadata. They do
+not transfer conversation text, tool arguments, reflection narratives, or
+emotional memories. The publisher wiring inside each engine remains an
+explicit, separately reviewed opt-in change.
 
 See [Architecture](docs/ARCHITECTURE.md),
 [Executor](docs/EXECUTOR.md),
@@ -33,10 +36,10 @@ The Hermes Evidence plugin uses one fixed read-only RPC method over a bounded
 stdio subprocess; paths and the interpreter are trusted operator settings,
 not model-supplied arguments.
 
-The three new publisher APIs are explicit, allowlisted write surfaces. Each
-accepts only a narrow engine-specific summary. They do not accept generic
-event envelopes from plugin callers and do not change ownership of any
-engine database. KIE remains the owner of its own event ledger.
+The three publisher APIs are explicit, allowlisted write surfaces. Each
+accepts only a narrow engine-specific summary and writes only to the KIE event
+ledger. KIE remains the owner of its own data store. Each engine retains its
+own database and internal decision logic.
 
 Hermes remains the runtime host, not a fifth domain engine. Host-originated
 events use the reserved `hermes_host` producer identity. The four domain-engine
