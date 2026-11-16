@@ -7,6 +7,7 @@ allowlist before writing anything to KIE's append-only event store.
 from __future__ import annotations
 
 import errno
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,12 @@ from ..event_store import SQLiteEventStore
 
 MAX_MESSAGE_BYTES = 64 * 1024
 _SOCKET_PATH_MAX_BYTES = 100
+_HEALTH_CONTROL_MESSAGE = {"control": "health"}
+_HEALTH_CONTROL_RESPONSE = {
+    "ok": True,
+    "service": "kie-engine-event-ingress",
+    "protocol_version": 1,
+}
 
 _INTENTS = frozenset({
     "personal_experience", "opinion", "factual_claim", "project_proposal",
@@ -206,8 +213,24 @@ def _event_from_message(message: Any) -> IntegrationEvent:
     )
 
 
+def _probe_socket(socket_path: Path) -> bool:
+    """Check the dedicated control response without creating an engine event."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(0.5)
+            client.connect(str(socket_path))
+            client.sendall(
+                json.dumps(_HEALTH_CONTROL_MESSAGE, separators=(",", ":")).encode("utf-8") + b"\\n"
+            )
+            with client.makefile("rb") as stream:
+                response = stream.readline(1024)
+        return bool(response) and json.loads(response.decode("utf-8")) == _HEALTH_CONTROL_RESPONSE
+    except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return False
+
+
 class EngineEventSocketServer:
-    """A single-line JSON receiver bound to a private Unix-domain socket."""
+    """A single-line JSON receiver with cross-process exclusive ownership."""
 
     def __init__(self, socket_path: str | Path, database_path: str | Path) -> None:
         socket_value = Path(socket_path).expanduser()
@@ -222,13 +245,39 @@ class EngineEventSocketServer:
         self.database_path = database_value
         self._server = None
         self._thread: threading.Thread | None = None
+        self._lock_fd: int | None = None
+        self._observer = False
         self._lock = threading.RLock()
 
     @property
     def is_running(self) -> bool:
-        """Whether the local event receiver thread is alive."""
+        """Whether this process owns a live local event receiver."""
         with self._lock:
             return self._server is not None and self._thread is not None and self._thread.is_alive()
+
+    @property
+    def status(self) -> str:
+        """Return owner, connected, or unavailable for the shared ingress."""
+        with self._lock:
+            if (
+                self._server is not None
+                and self._thread is not None
+                and self._thread.is_alive()
+            ):
+                return "owner"
+            observer = self._observer
+        if observer and _probe_socket(self.socket_path):
+            return "connected"
+        return "unavailable"
+
+    def _release_lock(self) -> None:
+        lock_fd = self._lock_fd
+        self._lock_fd = None
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
 
     def start(self) -> None:
         with self._lock:
@@ -243,86 +292,119 @@ class EngineEventSocketServer:
                             private_directory.chmod(0o700)
                     except OSError:
                         pass
-            if os.path.lexists(self.socket_path):
-                info = os.lstat(self.socket_path)
-                if not stat.S_ISSOCK(info.st_mode):
-                    raise ValueError("refusing to replace a non-socket path")
-                getuid = getattr(os, "getuid", None)
-                if getuid is not None and info.st_uid != getuid():
-                    raise ValueError("refusing to replace a socket owned by another user")
-                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                try:
-                    probe.settimeout(0.1)
-                    probe.connect(str(self.socket_path))
-                except OSError as exc:
-                    if exc.errno == errno.ECONNREFUSED:
-                        self.socket_path.unlink()
-                    elif exc.errno != errno.ENOENT:
-                        raise ValueError("could not safely inspect the existing socket") from exc
-                else:
-                    raise ValueError("an engine event socket is already active")
-                finally:
-                    probe.close()
 
-            owner = self
+            # flock is released by the kernel when the owning process exits.
+            # Keep the lock file itself: unlinking it could create a second inode
+            # and allow two processes to believe they own the same socket.
+            lock_path = self.socket_path.with_name(self.socket_path.name + ".lock")
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                os.fchmod(lock_fd, 0o600)
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(lock_fd)
+                self._observer = True
+                return
+            except Exception:
+                os.close(lock_fd)
+                raise
 
-            class Handler(socketserver.StreamRequestHandler):
-                def handle(self) -> None:
-                    self.request.settimeout(1.0)
+            self._lock_fd = lock_fd
+            try:
+                if os.path.lexists(self.socket_path):
+                    info = os.lstat(self.socket_path)
+                    if not stat.S_ISSOCK(info.st_mode):
+                        raise ValueError("refusing to replace a non-socket path")
+                    getuid = getattr(os, "getuid", None)
+                    if getuid is not None and info.st_uid != getuid():
+                        raise ValueError("refusing to replace a socket owned by another user")
+                    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     try:
-                        line = self.rfile.readline(MAX_MESSAGE_BYTES + 1)
-                        if not line or len(line) > MAX_MESSAGE_BYTES or not line.endswith(b"\n"):
-                            self._reply({"ok": False, "reason": "invalid_message_size"})
-                            return
-                        message = json.loads(line.decode("utf-8"))
-                        event = _event_from_message(message)
-                        with SQLiteEventStore(owner.database_path) as store:
-                            result = store.append(event)
-                        self._reply({"ok": True, "event_id": str(result.event_id), "inserted": result.inserted})
-                    except (UnicodeDecodeError, json.JSONDecodeError, EngineEventRejected, ValueError):
-                        self._reply({"ok": False, "reason": "event_rejected"})
-                    except (OSError, TimeoutError):
-                        self._reply({"ok": False, "reason": "ingress_unavailable"})
-                    except Exception:
-                        # Do not reveal database paths, SQL, or host diagnostics to publishers.
-                        self._reply({"ok": False, "reason": "ingress_failed"})
+                        probe.settimeout(0.1)
+                        probe.connect(str(self.socket_path))
+                    except OSError as exc:
+                        if exc.errno == errno.ECONNREFUSED:
+                            self.socket_path.unlink()
+                        elif exc.errno != errno.ENOENT:
+                            raise ValueError("could not safely inspect the existing socket") from exc
+                    else:
+                        raise ValueError("an engine event socket is already active without the KIE lock")
+                    finally:
+                        probe.close()
 
-                def _reply(self, value: dict[str, Any]) -> None:
-                    try:
-                        self.wfile.write(json.dumps(value, separators=(",", ":")).encode("utf-8") + b"\n")
-                        self.wfile.flush()
-                    except OSError:
-                        pass
+                owner = self
 
-            class Server(socketserver.ThreadingUnixStreamServer):
-                daemon_threads = True
-                allow_reuse_address = False
+                class Handler(socketserver.StreamRequestHandler):
+                    def handle(self) -> None:
+                        self.request.settimeout(1.0)
+                        try:
+                            line = self.rfile.readline(MAX_MESSAGE_BYTES + 1)
+                            if not line or len(line) > MAX_MESSAGE_BYTES or not line.endswith(b"\\n"):
+                                self._reply({"ok": False, "reason": "invalid_message_size"})
+                                return
+                            message = json.loads(line.decode("utf-8"))
+                            if message == _HEALTH_CONTROL_MESSAGE:
+                                self._reply(_HEALTH_CONTROL_RESPONSE)
+                                return
+                            event = _event_from_message(message)
+                            with SQLiteEventStore(owner.database_path) as store:
+                                result = store.append(event)
+                            self._reply({"ok": True, "event_id": str(result.event_id), "inserted": result.inserted})
+                        except (UnicodeDecodeError, json.JSONDecodeError, EngineEventRejected, ValueError):
+                            self._reply({"ok": False, "reason": "event_rejected"})
+                        except (OSError, TimeoutError):
+                            self._reply({"ok": False, "reason": "ingress_unavailable"})
+                        except Exception:
+                            # Do not reveal database paths, SQL, or host diagnostics to publishers.
+                            self._reply({"ok": False, "reason": "ingress_failed"})
 
-            server = Server(str(self.socket_path), Handler)
-            os.chmod(self.socket_path, 0o600)
-            self._server = server
-            self._thread = threading.Thread(
-                target=server.serve_forever,
-                name="kie-engine-event-ingress",
-                daemon=True,
-            )
-            self._thread.start()
+                    def _reply(self, value: dict[str, Any]) -> None:
+                        try:
+                            self.wfile.write(json.dumps(value, separators=(",", ":")).encode("utf-8") + b"\\n")
+                            self.wfile.flush()
+                        except OSError:
+                            pass
+
+                class Server(socketserver.ThreadingUnixStreamServer):
+                    daemon_threads = True
+                    allow_reuse_address = False
+
+                server = Server(str(self.socket_path), Handler)
+                os.chmod(self.socket_path, 0o600)
+                self._server = server
+                self._observer = False
+                self._thread = threading.Thread(
+                    target=server.serve_forever,
+                    name="kie-engine-event-ingress",
+                    daemon=True,
+                )
+                self._thread.start()
+            except Exception:
+                self._release_lock()
+                raise
 
     def shutdown(self) -> None:
         with self._lock:
             server, thread = self._server, self._thread
             self._server = None
             self._thread = None
-        if server is not None:
-            server.shutdown()
-            server.server_close()
-        if thread is not None:
-            thread.join(timeout=2.0)
+            self._observer = False
+
         try:
-            if os.path.lexists(self.socket_path) and stat.S_ISSOCK(os.lstat(self.socket_path).st_mode):
-                self.socket_path.unlink()
-        except OSError:
-            pass
+            if server is not None:
+                server.shutdown()
+                server.server_close()
+            if thread is not None:
+                thread.join(timeout=2.0)
+            # Only the process that held the exclusive lock may unlink the socket.
+            if server is not None:
+                try:
+                    if os.path.lexists(self.socket_path) and stat.S_ISSOCK(os.lstat(self.socket_path).st_mode):
+                        self.socket_path.unlink()
+                except OSError:
+                    pass
+        finally:
+            self._release_lock()
 
 
 def make_engine_event_message(engine_id: str, event_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
