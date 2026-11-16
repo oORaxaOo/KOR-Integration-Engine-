@@ -55,9 +55,9 @@ def _exact_keys(payload: Any, required: set[str]) -> Mapping[str, Any]:
 def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[dict[str, Any], Sensitivity, tuple[str, ...]]:
     if engine_id == "critical_thinking" and event_type == "critical_thinking.review_routed":
         data = _exact_keys(payload, {"intent", "review_level", "user_requested", "signals"})
-        if data["intent"] not in _INTENTS:
+        if not isinstance(data["intent"], str) or data["intent"] not in _INTENTS:
             raise EngineEventRejected("invalid critical-thinking intent")
-        if data["review_level"] not in _REVIEW_LEVELS:
+        if not isinstance(data["review_level"], str) or data["review_level"] not in _REVIEW_LEVELS:
             raise EngineEventRejected("invalid critical-thinking review level")
         if not isinstance(data["user_requested"], bool):
             raise EngineEventRejected("user_requested must be boolean")
@@ -77,7 +77,7 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
 
     if engine_id == "reliability" and event_type == "reliability.runtime_observation":
         data = _exact_keys(payload, {"kind", "count", "anomaly_codes"})
-        if data["kind"] not in _RELIABILITY_KINDS:
+        if not isinstance(data["kind"], str) or data["kind"] not in _RELIABILITY_KINDS:
             raise EngineEventRejected("invalid reliability observation kind")
         count = _non_negative_int(data, "count")
         codes = data["anomaly_codes"]
@@ -93,7 +93,7 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
             raise EngineEventRejected("anomaly_codes are only valid for response_anomaly")
         return {"kind": data["kind"], "count": count, "anomaly_codes": list(codes)}, Sensitivity.INTERNAL, ("critical_thinking",)
 
-    if engine_id == "reliability" and event_type == "reliability.session_snapshot":
+    if engine_id == "reliability" and event_type == "reliability.runtime_snapshot":
         keys = {
             "api_requests", "api_successes", "api_errors", "tool_calls",
             "tool_blocks", "anomaly_count", "context_pressure",
@@ -101,7 +101,7 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
             "model_turns", "user_task_labels",
         }
         data = _exact_keys(payload, keys)
-        if data["context_pressure"] not in _PRESSURE_LEVELS:
+        if not isinstance(data["context_pressure"], str) or data["context_pressure"] not in _PRESSURE_LEVELS:
             raise EngineEventRejected("invalid context_pressure")
         clean = {key: _non_negative_int(data, key) for key in keys if key != "context_pressure"}
         clean["context_pressure"] = data["context_pressure"]
@@ -116,7 +116,7 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
             "status", "step_count", "steps_remaining", "hypothesis_count",
             "limitations_count", "follow_up_pending",
         })
-        if data["status"] not in _EMOTION_STATUSES:
+        if not isinstance(data["status"], str) or data["status"] not in _EMOTION_STATUSES:
             raise EngineEventRejected("invalid emotion reflection status")
         clean = {
             "step_count": _non_negative_int(data, "step_count", maximum=4),
@@ -200,7 +200,16 @@ class EngineEventSocketServer:
                 getuid = getattr(os, "getuid", None)
                 if getuid is not None and info.st_uid != getuid():
                     raise ValueError("refusing to replace a socket owned by another user")
-                self.socket_path.unlink()
+                probe = __import__("socket").socket(__import__("socket").AF_UNIX, __import__("socket").SOCK_STREAM)
+                try:
+                    probe.settimeout(0.1)
+                    probe.connect(str(self.socket_path))
+                except OSError:
+                    self.socket_path.unlink()
+                else:
+                    raise ValueError("an engine event socket is already active")
+                finally:
+                    probe.close()
 
             owner = self
 
