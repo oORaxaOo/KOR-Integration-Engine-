@@ -231,3 +231,16 @@ def test_kie_engine_events_tool_fails_closed_without_kie_database():
 
     result = json.loads(handler({"engine_id": "reliability"}))
     assert result == {"ok": False, "reason": "integration_not_configured"}
+
+
+
+def test_kie_engine_events_tool_does_not_create_missing_database(tmp_path):
+    database = tmp_path / "missing" / "kie.sqlite3"
+    ctx = FakeHermesContext({"kie_database": str(database)})
+    register(ctx)
+    handler = ctx.tools["kie_engine_events"]["handler"]
+
+    result = json.loads(handler({"engine_id": "reliability"}))
+
+    assert result == {"ok": False, "reason": "kie_database_unavailable"}
+    assert not database.exists()
