@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import socket
 import socketserver
 import stat
 import threading
@@ -107,8 +108,6 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
         clean["context_pressure"] = data["context_pressure"]
         if clean["api_successes"] + clean["api_errors"] > clean["api_requests"]:
             raise EngineEventRejected("API outcomes exceed API requests")
-        if clean["tool_blocks"] > clean["tool_calls"]:
-            raise EngineEventRejected("tool blocks exceed tool calls")
         return clean, Sensitivity.INTERNAL, ("critical_thinking",)
 
     if engine_id == "emotion" and event_type == "emotion.reflection_completed":
@@ -200,7 +199,7 @@ class EngineEventSocketServer:
                 getuid = getattr(os, "getuid", None)
                 if getuid is not None and info.st_uid != getuid():
                     raise ValueError("refusing to replace a socket owned by another user")
-                probe = __import__("socket").socket(__import__("socket").AF_UNIX, __import__("socket").SOCK_STREAM)
+                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
                     probe.settimeout(0.1)
                     probe.connect(str(self.socket_path))
