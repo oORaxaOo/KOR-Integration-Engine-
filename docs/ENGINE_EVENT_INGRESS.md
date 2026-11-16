@@ -64,4 +64,6 @@ details from publishers. Engine publishers are designed to fail open: an unavail
 KIE socket must not stop an engine's primary Hermes hook or tool.
 
 This interface records observations; it does not prove correctness, emotion, intent,
-or consciousness, and it does not automatically trigger other engines.
+or consciousness, and it does not automatically trigger other engines. Hermes can inspect the
+stored operational metadata through `kie_engine_events`; this is read-only and
+does not cause the producer or another engine to run.
