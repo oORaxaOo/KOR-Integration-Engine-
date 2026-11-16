@@ -12,8 +12,7 @@ plugins:
   - repo: oORaxaOo/Emotion-Engine
     ref: 38783a43bde84cf1aa85f2aa73b722db0d827a5a
   - repo: oORaxaOo/KOR-Integration-Engine-
-    subdir: plugins/hermes-kie-evidence
-    ref: 681f60b53cd5b8e630fcae65a0b3d9f267ead477
+    ref: 9de9bbcafb17f547a6568b4efd03f1c84904dbf3
 config:
   kor-kie-evidence:
     engine_event_socket: ~/.hermes/run/kie-engine-events.sock
