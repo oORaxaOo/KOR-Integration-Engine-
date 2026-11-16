@@ -273,6 +273,10 @@ class HealthSupervisor:
         try:
             report = self.get_report()
         except Exception:
+            failure_fingerprint = (("kie-health-supervisor", "inspection_failed"),)
+            if failure_fingerprint == self._last_fingerprint:
+                return None
+            self._last_fingerprint = failure_fingerprint
             return {
                 "context": (
                     "[KIE HEALTH SUPERVISION WARNING]\n"
