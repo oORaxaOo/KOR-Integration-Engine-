@@ -29,10 +29,12 @@ enables successful installs. A failed entry is reported separately; the other
 entries may still install, and the pack command exits non-zero when any entry
 fails. Do not treat a partial installation as a healthy stack.
 
-The pack contains no secrets and no machine-specific paths. Hermes retains its
-normal security scanning and per-plugin capability consent. It does not bulk-grant
-privileges. The pack is declarative: it does not introduce a new runtime component
-and it does not make KIE clone or install repositories when KIE loads.
+The pack contains no secrets and no machine-specific paths. It seeds the same
+private KIE socket path and standard home-directory database/source paths for all
+five plugins. Hermes preserves values the operator has already configured; the
+pack only fills missing settings. Hermes retains its normal security scanning and
+per-plugin capability consent. It does not bulk-grant privileges. The pack is
+declarative: KIE does not clone or install repositories when it loads.
 
 ## Important Evidence Engine behavior
 
@@ -51,11 +53,14 @@ Evidence Engine does not expose database writers or arbitrary command execution
 as model-callable tools. Its project commands must be fixed in an operator-owned
 policy file. The policy is a trust boundary, not an OS sandbox.
 
+The pack supplies standard non-secret defaults. It does not create or pre-authorize
+an Evidence project policy.
+
 ## Post-install configuration
 
-The pack installs and enables the plugins, but it cannot safely guess machine-
-specific paths. Configure the following in the existing Hermes profile without
-replacing unrelated settings.
+The pack seeds the standard paths. The active Hermes Python interpreter is
+discovered by KIE at runtime. Confirm the seeded settings in the existing Hermes
+profile rather than replacing unrelated settings.
 
 ### Evidence Engine
 
@@ -78,18 +83,24 @@ Edit the policy to the exact workspace roots and fixed test/build commands that
 you approve. Until a valid policy exists for a workspace, coding verification
 will fail closed for that workspace; this is not an engine crash.
 
-### KIE
+### KIE and the shared engine connection
 
-Configure the KIE plugin's `evidence_python`, `evidence_source_root`,
-`evidence_database`, and `kie_database` settings. The Evidence database path
-must match the path used by Evidence Engine. `evidence_source_root` must point to
-the installed Evidence Engine checkout (the directory containing `src/evidence_engine`),
-and `evidence_python` must be the Python interpreter used by the Hermes runtime.
+The pack seeds these matching values for KIE, Evidence, Critical Thinking,
+Reliability, and Emotion:
 
-Configure `engine_event_socket` to an absolute Unix-socket path. Set the same path
-as `kie_event_socket` in Critical Thinking, Reliability, and Emotion. Keep the
-socket within the Hermes user's private `~/.hermes` directory. Do not put it in
-a shared directory.
+- Event socket: `~/.hermes/run/kie-engine-events.sock`
+- KIE ledger/workflow database: `~/.hermes/kie/kie.sqlite3`
+- Evidence source checkout: `~/.hermes/plugins/evidence-engine`
+- Evidence database: `~/.hermes/evidence-engine/evidence.sqlite3`
+
+KIE uses the active Hermes Python interpreter automatically. The Evidence source
+path must contain `src/evidence_engine/bridge.py`. If you use a non-default
+`HERMES_HOME`, a custom plugin directory, or a custom Evidence database, update
+the matching paths in KIE settings so both plugins address the same install and
+database.
+
+The socket is private local IPC, not a network listener. Keep it inside the
+Hermes user's private directory; do not place it in a shared directory.
 
 ### Restart and verify
 
@@ -104,7 +115,18 @@ hermes plugins doctor emotion-engine
 hermes plugins doctor kor-kie-evidence
 ```
 
-The pack install result only proves that repository checkouts succeeded. The
+After restart, ask Lilith for a KIE system health report or call the read-only
+`kie_system_health` tool. KIE also checks health before normal LLM turns and
+injects a deduplicated system-health warning when a component is missing or an
+allowlisted failure was observed. The alert is delivered on the next normal turn;
+KIE does not make an extra LLM call or continuously poll idle engines.
+
+The health report covers all four domain engines, event-socket availability,
+Evidence bridge configuration, and recent allowlisted Reliability/CTE/Emotion/
+Evidence failure events. Old failure events expire from the active alert window.
+The system does not automatically restart plugins or change their code.
+
+The pack install result proves only that repository checkouts succeeded. The
 doctor checks and KIE runtime health report are the next layer of verification.
 A complete live integration test must confirm that KIE receives at least one
 valid event from each supporting engine and can successfully read the configured
