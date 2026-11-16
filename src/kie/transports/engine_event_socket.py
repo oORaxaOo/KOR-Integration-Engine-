@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 from uuid import UUID, uuid4
 
-from .events import EpistemicStatus, IntegrationEvent, Sensitivity
-from .event_store import SQLiteEventStore
+from ..events import EpistemicStatus, IntegrationEvent, Sensitivity
+from ..event_store import SQLiteEventStore
 
 MAX_MESSAGE_BYTES = 64 * 1024
 _SOCKET_PATH_MAX_BYTES = 100
