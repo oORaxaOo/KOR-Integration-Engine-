@@ -1,0 +1,14 @@
+name: kor-lilith-engine-stack
+description: Pinned KOR stack for Hermes Agent — KIE plus all three supporting engines
+author: oORaxaOo
+version: 0.1.0
+plugins:
+  - repo: oORaxaOo/KOR-Integration-Engine-
+    subdir: plugins/hermes-kie-evidence
+    ref: b035ed60adb15a19033f20fbafdb7574fde11f2b
+  - repo: oORaxaOo/Critical-Thinking-Engine
+    ref: 1eb478c08213a751b99db59d2acc20046dde41d8
+  - repo: oORaxaOo/Reliability-Engine
+    ref: d3d16cd02718fdc038d2663d35298804d7247649
+  - repo: oORaxaOo/Emotion-Engine
+    ref: be8a49ddd60ebc2168791985afa4b9fea8df3aaa
