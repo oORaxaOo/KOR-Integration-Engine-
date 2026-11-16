@@ -43,9 +43,15 @@ for raw in sys.stdin:
 
 
 class FakeHermesContext:
-    def __init__(self, settings):
+    def __init__(self, settings, loaded_plugins=None):
         self.settings = settings
         self.tools = {}
+        self.hooks = {}
+        self.unload_callbacks = []
+        self.loaded_plugins = set(loaded_plugins or {
+            "evidence-engine", "critical-thinking-engine",
+            "reliability-engine", "emotion-engine",
+        })
 
     def get_config(self, key, default=None):
         current = self.settings
@@ -58,11 +64,21 @@ class FakeHermesContext:
     def register_tool(self, **kwargs):
         self.tools[kwargs["name"]] = kwargs
 
+    def register_hook(self, name, callback, **kwargs):
+        self.hooks[name] = callback
+
+    def has_plugin(self, plugin_id):
+        return plugin_id in self.loaded_plugins
+
+    def on_unload(self, callback):
+        self.unload_callbacks.append(callback)
+
 
 def test_register_adds_one_async_read_only_evidence_tool():
     ctx = FakeHermesContext({})
     register(ctx)
-    assert set(ctx.tools) == {"kie_evidence_lookup", "kie_engine_events"}
+    assert set(ctx.tools) == {"kie_evidence_lookup", "kie_engine_events", "kie_system_health"}
+    assert callable(ctx.hooks["pre_llm_call"])
     event_entry = ctx.tools["kie_engine_events"]
     assert event_entry["toolset"] == "kor_kie"
     assert event_entry["schema"]["parameters"]["required"] == ["engine_id"]
@@ -133,7 +149,7 @@ def test_hermes_tool_fails_closed_when_settings_are_missing():
     handler = ctx.tools["kie_evidence_lookup"]["handler"]
     result = json.loads(asyncio.run(handler({"evidence_task_id": str(uuid4())})))
     assert result["ok"] is False
-    assert result["reason"] == "integration_not_configured"
+    assert result["reason"] == "integration_configuration_invalid"
 
 
 
@@ -215,13 +231,19 @@ def test_kie_engine_events_tool_returns_only_recent_sanitized_events(tmp_path):
     assert "finding" not in json.dumps(emotion_result)
 
 
-def test_kie_engine_events_tool_rejects_evidence_and_unknown_engines(tmp_path):
-    ctx = FakeHermesContext({"kie_database": str(tmp_path / "kie.sqlite3")})
+def test_kie_engine_events_tool_accepts_evidence_and_rejects_unknown_engines(tmp_path):
+    database = tmp_path / "kie.sqlite3"
+    with SQLiteEventStore(database):
+        pass
+    ctx = FakeHermesContext({"kie_database": str(database)})
     register(ctx)
     handler = ctx.tools["kie_engine_events"]["handler"]
 
-    result = json.loads(handler({"engine_id": "evidence"}))
-    assert result == {"ok": False, "reason": "invalid_engine_id"}
+    evidence_result = json.loads(handler({"engine_id": "evidence"}))
+    unknown_result = json.loads(handler({"engine_id": "unknown"}))
+    assert evidence_result["ok"] is True
+    assert evidence_result["event_count"] == 0
+    assert unknown_result == {"ok": False, "reason": "invalid_engine_id"}
 
 
 def test_kie_engine_events_tool_fails_closed_without_kie_database():
@@ -230,7 +252,7 @@ def test_kie_engine_events_tool_fails_closed_without_kie_database():
     handler = ctx.tools["kie_engine_events"]["handler"]
 
     result = json.loads(handler({"engine_id": "reliability"}))
-    assert result == {"ok": False, "reason": "integration_not_configured"}
+    assert result == {"ok": False, "reason": "kie_database_unavailable"}
 
 
 
@@ -244,3 +266,67 @@ def test_kie_engine_events_tool_does_not_create_missing_database(tmp_path):
 
     assert result == {"ok": False, "reason": "kie_database_unavailable"}
     assert not database.exists()
+
+
+
+def test_system_health_tool_reports_plugin_state_and_event_ingress(tmp_path):
+    source = tmp_path / "evidence-plugin"
+    bridge = source / "src" / "evidence_engine" / "bridge.py"
+    bridge.parent.mkdir(parents=True)
+    bridge.write_text("# bridge", encoding="utf-8")
+    socket_path = tmp_path / "run" / "kie-events.sock"
+    database = tmp_path / "kie.sqlite3"
+    ctx = FakeHermesContext({
+        "engine_event_socket": str(socket_path),
+        "kie_database": str(database),
+        "evidence_python": sys.executable,
+        "evidence_source_root": str(source),
+        "evidence_database": str(tmp_path / "evidence.sqlite3"),
+    })
+    register(ctx)
+    try:
+        report = json.loads(ctx.tools["kie_system_health"]["handler"]({}))
+        assert report["status"] == "healthy"
+        assert report["plugins"]["evidence-engine"] == "loaded"
+        assert report["event_ingress"] == "ready"
+        assert report["evidence_adapter"]["source"] == "ready"
+        assert report["evidence_adapter"]["database"] == "not_initialized"
+    finally:
+        for callback in ctx.unload_callbacks:
+            callback()
+
+
+def test_pre_llm_health_hook_alerts_on_missing_engine_and_deduplicates(tmp_path):
+    source = tmp_path / "evidence-plugin"
+    bridge = source / "src" / "evidence_engine" / "bridge.py"
+    bridge.parent.mkdir(parents=True)
+    bridge.write_text("# bridge", encoding="utf-8")
+    socket_path = tmp_path / "run" / "kie-events.sock"
+    database = tmp_path / "kie.sqlite3"
+    ctx = FakeHermesContext(
+        {
+            "engine_event_socket": str(socket_path),
+            "kie_database": str(database),
+            "evidence_python": sys.executable,
+            "evidence_source_root": str(source),
+            "evidence_database": str(tmp_path / "evidence.sqlite3"),
+        },
+        loaded_plugins={
+            "evidence-engine", "critical-thinking-engine", "reliability-engine",
+        },
+    )
+    register(ctx)
+    try:
+        hook = ctx.hooks["pre_llm_call"]
+        first = hook()
+        repeated = hook()
+        assert first is not None
+        assert "emotion-engine" in first["context"]
+        assert repeated is None
+        ctx.loaded_plugins.add("emotion-engine")
+        recovery = hook()
+        assert recovery is not None
+        assert "recovered" in recovery["context"].lower()
+    finally:
+        for callback in ctx.unload_callbacks:
+            callback()

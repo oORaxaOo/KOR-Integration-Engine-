@@ -161,3 +161,37 @@ def test_server_rejects_oversized_message(tmp_path):
         assert not database.exists()
     finally:
         server.shutdown()
+
+
+
+def test_event_contract_accepts_content_free_engine_failure_observations():
+    cases = (
+        ("critical_thinking", "critical_thinking.hook_failure", {"failure_code": "hook_exception"}),
+        ("emotion", "emotion.reflection_failed", {"failure_code": "reflection_handler_error"}),
+        ("evidence", "evidence.verification_unavailable", {"failure_code": "policy_invalid"}),
+    )
+    for engine_id, event_type, payload in cases:
+        event = _event_from_message(make_engine_event_message(engine_id, event_type, payload))
+        assert event.producer_engine == engine_id
+        assert event.payload == payload
+        assert event.epistemic_status.value == "observed"
+
+
+def test_event_contract_rejects_raw_engine_failure_diagnostics():
+    message = make_engine_event_message(
+        "evidence",
+        "evidence.verification_unavailable",
+        {"failure_code": "policy_invalid", "exception": "private /home/user path"},
+    )
+    with pytest.raises(EngineEventRejected):
+        _event_from_message(message)
+
+
+def test_event_contract_rejects_unknown_engine_failure_code():
+    message = make_engine_event_message(
+        "emotion",
+        "emotion.reflection_failed",
+        {"failure_code": "database_password"},
+    )
+    with pytest.raises(EngineEventRejected):
+        _event_from_message(message)

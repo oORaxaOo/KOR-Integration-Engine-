@@ -6,6 +6,8 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 import logging
+import os
+import sys
 import threading
 from typing import Any, Mapping
 from uuid import UUID, uuid4
@@ -18,11 +20,12 @@ from .executor import AdapterRegistry, ExecutionPolicy, WorkflowExecutor
 from .transports.evidence_stdio import EvidenceStdioConfig, EvidenceStdioTransport
 from .workflow_store import SQLiteWorkflowStore, StepStatus
 from .workflows import WorkflowDefinition, WorkflowStep, plan_workflow
+from .health import HealthSupervisor
 
 _PLUGIN_VERSION = "0.8.0"
 _WORKFLOW_ID = "hermes_evidence_lookup"
 _ENGINE_EVENT_TOOL = "kie_engine_events"
-_ENGINE_EVENT_ENGINES = frozenset({"critical_thinking", "reliability", "emotion"})
+_ENGINE_EVENT_ENGINES = frozenset({"critical_thinking", "reliability", "emotion", "evidence"})
 _ENGINE_EVENT_SERVERS: dict[tuple[str, str], EngineEventSocketServer] = {}
 _ENGINE_EVENT_SERVERS_LOCK = threading.RLock()
 _LOGGER = logging.getLogger("kie.hermes_plugin")
@@ -30,13 +33,17 @@ _LOGGER = logging.getLogger("kie.hermes_plugin")
 
 def _start_engine_event_ingress(ctx) -> EngineEventSocketServer | None:
     """Start the optional same-user Unix-socket receiver when configured."""
-    socket_value = ctx.get_config("engine_event_socket", default=None)
-    database_value = ctx.get_config("kie_database", default=None)
+    home = _hermes_home()
+    socket_value = ctx.get_config(
+        "engine_event_socket", default=str(home / "run" / "kie-engine-events.sock")
+    )
+    database_value = ctx.get_config(
+        "kie_database", default=str(home / "kie" / "kie.sqlite3")
+    )
     if not isinstance(socket_value, str) or not socket_value.strip():
-        return None
+        socket_value = str(home / "run" / "kie-engine-events.sock")
     if not isinstance(database_value, str) or not database_value.strip():
-        _LOGGER.warning("KIE engine event ingress is disabled: kie_database is not configured")
-        return None
+        database_value = str(home / "kie" / "kie.sqlite3")
     socket_path = Path(socket_value).expanduser()
     database_path = Path(database_value).expanduser()
     if not socket_path.is_absolute() or not database_path.is_absolute():
@@ -61,17 +68,56 @@ def _json(data: Mapping[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
-def _read_settings(ctx) -> tuple[EvidenceStdioConfig, Path, int]:
-    def required(key: str) -> str:
-        value = ctx.get_config(key, default=None)
+def _hermes_home() -> Path:
+    return Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
+
+
+def _default_evidence_database() -> Path:
+    return Path(os.environ.get(
+        "EVIDENCE_ENGINE_DB",
+        str(Path.home() / ".hermes" / "evidence-engine" / "evidence.sqlite3"),
+    )).expanduser()
+
+
+def _health_supervisor(ctx, event_server) -> HealthSupervisor:
+    home = _hermes_home()
+    def configured_path(key: str, default: Path) -> Path:
+        value = ctx.get_config(key, default=str(default))
         if not isinstance(value, str) or not value.strip():
-            raise LookupError("required integration setting is missing")
+            return default
+        return Path(value).expanduser()
+
+    return HealthSupervisor(
+        ctx,
+        kie_database=configured_path("kie_database", home / "kie" / "kie.sqlite3"),
+        event_server=event_server,
+        evidence_python=configured_path("evidence_python", Path(sys.executable)),
+        evidence_source_root=configured_path(
+            "evidence_source_root", home / "plugins" / "evidence-engine"
+        ),
+        evidence_database=configured_path("evidence_database", _default_evidence_database()),
+    )
+
+
+def _read_settings(ctx) -> tuple[EvidenceStdioConfig, Path, int]:
+    home = _hermes_home()
+
+    def configured(key: str, default: str) -> str:
+        value = ctx.get_config(key, default=default)
+        if not isinstance(value, str) or not value.strip():
+            return default
         return value
 
-    python_executable = required("evidence_python")
-    evidence_source_root = required("evidence_source_root")
-    evidence_database = required("evidence_database")
-    kie_database_value = required("kie_database")
+    python_executable = configured("evidence_python", sys.executable)
+    evidence_source_root = configured(
+        "evidence_source_root", str(home / "plugins" / "evidence-engine")
+    )
+    evidence_database = configured(
+        "evidence_database", str(_default_evidence_database())
+    )
+    kie_database_value = configured(
+        "kie_database", str(home / "kie" / "kie.sqlite3")
+    )
     kie_database = Path(kie_database_value).expanduser()
     if not kie_database.is_absolute():
         raise ValueError("kie_database must be an absolute path")
@@ -240,9 +286,10 @@ def _register_engine_events_tool(ctx) -> None:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
             return _json({"ok": False, "reason": "invalid_limit"})
         try:
-            database_value = ctx.get_config("kie_database", default=None)
+            default_database = _hermes_home() / "kie" / "kie.sqlite3"
+            database_value = ctx.get_config("kie_database", default=str(default_database))
             if not isinstance(database_value, str) or not database_value.strip():
-                return _json({"ok": False, "reason": "integration_not_configured"})
+                database_value = str(default_database)
             database_path = Path(database_value).expanduser()
             if not database_path.is_absolute():
                 return _json({"ok": False, "reason": "integration_configuration_invalid"})
@@ -260,10 +307,48 @@ def _register_engine_events_tool(ctx) -> None:
     )
 
 
+def _register_system_health_tool(ctx, supervisor: HealthSupervisor) -> None:
+    schema = {
+        "name": "kie_system_health",
+        "description": (
+            "Read a deterministic, content-free health report for KIE and all four "
+            "independent KOR engines. Reports plugin load state, the event receiver, "
+            "Evidence bridge configuration, and recent allowlisted operational failures."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    }
+
+    def handle_health(params, **kwargs):
+        del kwargs
+        if not isinstance(params, Mapping) or params:
+            return _json({"ok": False, "reason": "invalid_tool_arguments"})
+        try:
+            return _json(supervisor.get_report())
+        except Exception:
+            return _json({"ok": False, "reason": "health_report_unavailable"})
+
+    ctx.register_tool(
+        name="kie_system_health",
+        toolset="kor_kie",
+        schema=schema,
+        handler=handle_health,
+    )
+
+
 def register(ctx) -> None:
-    """Register the Evidence tool and optional engine-to-KIE event ingress."""
-    _start_engine_event_ingress(ctx)
+    """Register read-only KIE tools, event ingress, and deterministic health supervision."""
+    event_server = _start_engine_event_ingress(ctx)
+    if event_server is not None and callable(getattr(ctx, "on_unload", None)):
+        ctx.on_unload(event_server.shutdown)
     _register_engine_events_tool(ctx)
+    supervisor = _health_supervisor(ctx, event_server)
+    _register_system_health_tool(ctx, supervisor)
+    ctx.register_hook("pre_llm_call", supervisor.on_pre_llm_call)
     schema = {
         "name": _TOOL_NAME,
         "description": (

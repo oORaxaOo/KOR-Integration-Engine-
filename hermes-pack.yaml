@@ -14,3 +14,17 @@ plugins:
   - repo: oORaxaOo/KOR-Integration-Engine-
     subdir: plugins/hermes-kie-evidence
     ref: b035ed60adb15a19033f20fbafdb7574fde11f2b
+config:
+  kor-kie-evidence:
+    engine_event_socket: ~/.hermes/run/kie-engine-events.sock
+    kie_database: ~/.hermes/kie/kie.sqlite3
+    evidence_source_root: ~/.hermes/plugins/evidence-engine
+    evidence_database: ~/.hermes/evidence-engine/evidence.sqlite3
+  evidence-engine:
+    kie_event_socket: ~/.hermes/run/kie-engine-events.sock
+  critical-thinking-engine:
+    kie_event_socket: ~/.hermes/run/kie-engine-events.sock
+  reliability-engine:
+    kie_event_socket: ~/.hermes/run/kie-engine-events.sock
+  emotion-engine:
+    kie_event_socket: ~/.hermes/run/kie-engine-events.sock
