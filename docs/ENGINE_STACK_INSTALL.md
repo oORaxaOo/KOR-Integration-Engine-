@@ -1,26 +1,117 @@
-# KOR Engine Stack Installation
+# KOR Lilith Engine Stack Installation
 
-The KOR stack is distributed as a Hermes plugin pack. It pins all four repositories to full immutable Git commit SHAs: KIE, Critical Thinking, Reliability, and Emotion.
+The KOR stack is distributed as one native Hermes plugin pack. It installs five
+separate plugins pinned to immutable Git commits:
 
-The pack contains no credentials and does not seed local filesystem paths. Each engine remains a separate Hermes plugin and is installed through Hermes' normal installer and consent/security checks.
+1. **Evidence Engine** — coding-only verification gate and evidence ledger
+2. **Critical Thinking Engine** — review routing and critical checks
+3. **Reliability Engine** — tool/runtime safeguards and operational observations
+4. **Emotion Engine** — bounded self-observation and reflection
+5. **KOR Integration Engine (KIE)** — coordination, event ledger, and read-only status tools
 
-## Install
+KIE is the coordinator, not a sixth domain engine. The other four remain separate
+plugins with their own code and responsibilities.
 
-From a checkout of this repository, inspect `hermes-pack.yaml` and run:
+## Install the complete stack in one operation
+
+Hermes Agent v0.23.1 includes native plugin-pack support. From a terminal, use
+the hosted pack directly:
 
 ```bash
-hermes plugins pack show ./hermes-pack.yaml
-hermes plugins pack install ./hermes-pack.yaml
+hermes plugins pack show https://raw.githubusercontent.com/oORaxaOo/KOR-Integration-Engine-/main/hermes-pack.yaml
+hermes plugins pack install https://raw.githubusercontent.com/oORaxaOo/KOR-Integration-Engine-/main/hermes-pack.yaml
 ```
 
-If the installed Hermes build does not provide `hermes plugins pack`, do not attempt an improvised install from plugin import code. Use a release that supports plugin packs or the documented pinned-install fallback. KIE must never clone repositories, install packages, or edit Hermes configuration during `register()`.
+The first command is a dry run. The second displays all five sources, commit pins,
+and declared capabilities, then asks for one confirmation before installing the
+pack. Hermes installs each entry through its normal pinned-plugin installer and
+enables successful installs. A failed entry is reported separately; the other
+entries may still install, and the pack command exits non-zero when any entry
+fails. Do not treat a partial installation as a healthy stack.
 
-## After installation
+The pack contains no secrets and no machine-specific paths. Hermes retains its
+normal security scanning and per-plugin capability consent. It does not bulk-grant
+privileges. The pack is declarative: it does not introduce a new runtime component
+and it does not make KIE clone or install repositories when KIE loads.
 
-Installation and activation are separate. Confirm all four plugins appear in `hermes plugins`, then enable them through Hermes' normal plugin controls. Configure the same absolute `kie_event_socket` path for the three engine publishers and `engine_event_socket` for KIE, plus the KIE database path. Restart Hermes after configuration changes.
+## Important Evidence Engine behavior
 
-The pack does not configure local paths because those differ by machine/profile. It does not start KIE ingress until required settings are present.
+Evidence Engine is included as its own plugin. Its coding verification gate runs
+only for coding turns with changed files and an operator-approved project policy.
+It fails closed when required verification cannot be completed.
+
+Its `transform_llm_output` hook uses `hold_stream=True`. While the plugin is
+enabled, Hermes holds final-response streaming until the final response is
+available; non-coding replies pass through unchanged, but they also wait for the
+final-response stage. This is an intentional safety trade-off, not an invisible
+zero-cost hook. Review this behavior before enabling the pack in the profile used
+for Lilith.
+
+Evidence Engine does not expose database writers or arbitrary command execution
+as model-callable tools. Its project commands must be fixed in an operator-owned
+policy file. The policy is a trust boundary, not an OS sandbox.
+
+## Post-install configuration
+
+The pack installs and enables the plugins, but it cannot safely guess machine-
+specific paths. Configure the following in the existing Hermes profile without
+replacing unrelated settings.
+
+### Evidence Engine
+
+Evidence Engine defaults to:
+
+- Database: `~/.hermes/evidence-engine/evidence.sqlite3`
+- Project policy: `~/.hermes/evidence-engine/policies.json`
+- Maximum attempts: 5
+
+Create the private policy directory and start from the repository example:
+
+```bash
+mkdir -p ~/.hermes/evidence-engine
+chmod 700 ~/.hermes/evidence-engine
+cp ~/.hermes/plugins/evidence-engine/examples/hermes-policies.example.json ~/.hermes/evidence-engine/policies.json
+chmod 600 ~/.hermes/evidence-engine/policies.json
+```
+
+Edit the policy to the exact workspace roots and fixed test/build commands that
+you approve. Until a valid policy exists for a workspace, coding verification
+will fail closed for that workspace; this is not an engine crash.
+
+### KIE
+
+Configure the KIE plugin's `evidence_python`, `evidence_source_root`,
+`evidence_database`, and `kie_database` settings. The Evidence database path
+must match the path used by Evidence Engine. `evidence_source_root` must point to
+the installed Evidence Engine checkout (the directory containing `src/evidence_engine`),
+and `evidence_python` must be the Python interpreter used by the Hermes runtime.
+
+Configure `engine_event_socket` to an absolute Unix-socket path. Set the same path
+as `kie_event_socket` in Critical Thinking, Reliability, and Emotion. Keep the
+socket within the Hermes user's private `~/.hermes` directory. Do not put it in
+a shared directory.
+
+### Restart and verify
+
+After saving the profile configuration, restart the Hermes process and inspect:
+
+```bash
+hermes plugins
+hermes plugins doctor evidence-engine
+hermes plugins doctor critical-thinking-engine
+hermes plugins doctor reliability-engine
+hermes plugins doctor emotion-engine
+hermes plugins doctor kor-kie-evidence
+```
+
+The pack install result only proves that repository checkouts succeeded. The
+doctor checks and KIE runtime health report are the next layer of verification.
+A complete live integration test must confirm that KIE receives at least one
+valid event from each supporting engine and can successfully read the configured
+Evidence task database.
 
 ## Version updates
 
-Update the four commit pins together only after the repositories pass their own CI and a cross-repository compatibility check. This file defines a tested stack, not arbitrary latest commits.
+Update the five commit pins together only after the repositories pass their own
+CI and the cross-repository compatibility check. This pack defines one tested
+stack; it does not follow moving branches or silently install the newest commits.
