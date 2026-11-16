@@ -146,6 +146,8 @@ def _validate_payload(engine_id: str, event_type: str, payload: Any) -> tuple[di
 def _event_from_message(message: Any) -> IntegrationEvent:
     if not isinstance(message, dict) or set(message) != {"event_id", "engine_id", "event_type", "payload"}:
         raise EngineEventRejected("message must contain event_id, engine_id, event_type, and payload")
+    if not isinstance(message["event_id"], str):
+        raise EngineEventRejected("event_id must be a UUID string")
     try:
         event_id = UUID(message["event_id"])
     except (TypeError, ValueError, AttributeError) as exc:
