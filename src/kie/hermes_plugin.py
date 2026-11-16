@@ -246,6 +246,8 @@ def _register_engine_events_tool(ctx) -> None:
             database_path = Path(database_value).expanduser()
             if not database_path.is_absolute():
                 return _json({"ok": False, "reason": "integration_configuration_invalid"})
+            if not database_path.is_file():
+                return _json({"ok": False, "reason": "kie_database_unavailable"})
             return _recent_engine_events(engine_id, limit, database_path)
         except Exception:
             return _json({"ok": False, "reason": "kie_event_read_failed"})
