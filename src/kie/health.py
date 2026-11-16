@@ -175,6 +175,40 @@ class HealthSupervisor:
                         "Reliability detected an allowlisted response anomaly.",
                     )
                     issues[(issue["component"], issue["code"])] = issue
+            elif event.event_type == "reliability.runtime_snapshot":
+                pressure = payload.get("context_pressure")
+                if pressure == "critical":
+                    issue = self._issue(
+                        "reliability-engine",
+                        "reliability_context_pressure_critical",
+                        "critical",
+                        "Reliability reported critical context pressure in its latest session snapshot.",
+                    )
+                    issues[(issue["component"], issue["code"])] = issue
+                elif pressure == "warning":
+                    issue = self._issue(
+                        "reliability-engine",
+                        "reliability_context_pressure_warning",
+                        "warning",
+                        "Reliability reported elevated context pressure in its latest session snapshot.",
+                    )
+                    issues[(issue["component"], issue["code"])] = issue
+                if payload.get("api_errors", 0) > 0:
+                    issue = self._issue(
+                        "reliability-engine",
+                        "reliability_api_errors",
+                        "warning",
+                        "Reliability reported API/provider errors in its latest session snapshot.",
+                    )
+                    issues[(issue["component"], issue["code"])] = issue
+                if payload.get("anomaly_count", 0) > 0:
+                    issue = self._issue(
+                        "reliability-engine",
+                        "reliability_response_anomalies",
+                        "warning",
+                        "Reliability reported response anomalies in its latest session snapshot.",
+                    )
+                    issues[(issue["component"], issue["code"])] = issue
             elif event.event_type == "critical_thinking.hook_failure":
                 issue = self._issue(
                     "critical-thinking-engine",
