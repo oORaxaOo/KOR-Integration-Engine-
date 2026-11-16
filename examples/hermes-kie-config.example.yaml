@@ -8,3 +8,13 @@ plugins:
         kie_database: /absolute/path/to/kie-integration.sqlite3
         timeout_seconds: 10
         engine_event_socket: /home/USER/.hermes/run/kie-engine-events.sock
+
+    critical-thinking-engine:
+      settings:
+        kie_event_socket: /home/USER/.hermes/run/kie-engine-events.sock
+    reliability-engine:
+      settings:
+        kie_event_socket: /home/USER/.hermes/run/kie-engine-events.sock
+    emotion-engine:
+      settings:
+        kie_event_socket: /home/USER/.hermes/run/kie-engine-events.sock
