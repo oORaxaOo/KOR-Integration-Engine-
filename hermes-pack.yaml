@@ -1,19 +1,18 @@
 name: kor-lilith-engine-stack
 description: Complete pinned KOR stack for Hermes Agent — KIE, Evidence, and the three supporting engines
 author: oORaxaOo
-version: 0.2.0
+version: 0.3.0
 plugins:
   - repo: oORaxaOo/Evidence-Engine
-    ref: cfeba818d6a0660f58a00091fc2b5e5e0dc810c0
+    ref: 3f75173236b602131e332f61a7162bda720a370a
   - repo: oORaxaOo/Critical-Thinking-Engine
-    ref: 1eb478c08213a751b99db59d2acc20046dde41d8
+    ref: b1d1c4b2085c14dd34708c9687c68e4f80e428da
   - repo: oORaxaOo/Reliability-Engine
-    ref: d3d16cd02718fdc038d2663d35298804d7247649
+    ref: db9fde87698f0fee245c1f261529014040fe3d7c
   - repo: oORaxaOo/Emotion-Engine
-    ref: be8a49ddd60ebc2168791985afa4b9fea8df3aaa
+    ref: 38783a43bde84cf1aa85f2aa73b722db0d827a5a
   - repo: oORaxaOo/KOR-Integration-Engine-
-    subdir: plugins/hermes-kie-evidence
-    ref: b035ed60adb15a19033f20fbafdb7574fde11f2b
+    ref: 9de9bbcafb17f547a6568b4efd03f1c84904dbf3
 config:
   kor-kie-evidence:
     engine_event_socket: ~/.hermes/run/kie-engine-events.sock

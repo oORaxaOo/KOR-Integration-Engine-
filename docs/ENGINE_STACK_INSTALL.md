@@ -137,3 +137,19 @@ Evidence task database.
 Update the five commit pins together only after the repositories pass their own
 CI and the cross-repository compatibility check. This pack defines one tested
 stack; it does not follow moving branches or silently install the newest commits.
+
+
+## Immutable stack revisions
+
+The published pack tracks this exact compatible snapshot (all refs are full commit SHAs):
+
+| Component | Repository | Commit |
+|---|---|---|
+| Evidence Engine | `oORaxaOo/Evidence-Engine` | `3f75173236b602131e332f61a7162bda720a370a` |
+| Critical Thinking Engine | `oORaxaOo/Critical-Thinking-Engine` | `b1d1c4b2085c14dd34708c9687c68e4f80e428da` |
+| Reliability Engine | `oORaxaOo/Reliability-Engine` | `db9fde87698f0fee245c1f261529014040fe3d7c` |
+| Emotion Engine | `oORaxaOo/Emotion-Engine` | `38783a43bde84cf1aa85f2aa73b722db0d827a5a` |
+| KIE plugin | `oORaxaOo/KOR-Integration-Engine-` | `681f60b53cd5b8e630fcae65a0b3d9f267ead477` |
+
+The pins are updated together after CI and integration-contract review. They do not
+follow a moving branch or silently change when a repository receives new commits.
