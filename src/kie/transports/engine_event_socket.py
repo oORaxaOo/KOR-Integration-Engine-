@@ -236,11 +236,13 @@ class EngineEventSocketServer:
                 return
             self.socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if hasattr(os, "getuid") and self.database_path.parent.stat().st_uid == os.getuid():
-                try:
-                    self.database_path.parent.chmod(0o700)
-                except OSError:
-                    pass
+            if hasattr(os, "getuid"):
+                for private_directory in {self.socket_path.parent, self.database_path.parent}:
+                    try:
+                        if private_directory.stat().st_uid == os.getuid():
+                            private_directory.chmod(0o700)
+                    except OSError:
+                        pass
             if os.path.lexists(self.socket_path):
                 info = os.lstat(self.socket_path)
                 if not stat.S_ISSOCK(info.st_mode):
